@@ -29,7 +29,17 @@ export interface LiveRun {
   requeueing?: Promise<void>;
   /** Shared by the children of one spawn whose reports are delivered together, in spawn order. */
   batch?: { ids: string[]; reports: Map<string, string> };
+  /** Why stop() ended it; the first stop wins. */
+  stoppedBy?: StopCause;
 }
+/** `parent`: the agent that started it was stopped, or ended while it still worked. `pi`: Pi closed or reloaded while it was paused (working runs are cut off and resumed instead). */
+type StopCause = 'user' | 'parent' | 'pi';
+// Said plainly: the aborted request's own error names no cause and reads as a failure.
+const STOPPED: Record<StopCause, string> = {
+  user: 'Stopped by the user. They ended it on purpose, so it did not fail: do not redo or delegate this task again unless they ask. Its chat is kept, so tell resumes it where it stopped.',
+  parent: 'Stopped because the agent that started it stopped or ended. Its chat is kept, so tell resumes it where it stopped.',
+  pi: 'Stopped because Pi closed or reloaded while it waited for the user. It is not resumed on its own; its chat is kept, so tell resumes it where it stopped.',
+};
 interface Options { parentSession?: string; usage?: UsageLedger; createSession?: typeof createAgentSession;
   /** Names of the built-in extensions the main session loaded (see `loadedBuiltins`). */
   builtins?: () => Iterable<string>;
@@ -355,13 +365,15 @@ export class Children {
       const last = session.messages.findLast(m => m.role === 'assistant');
       transition(info, info.state === 'stopping' || last?.role === 'assistant' && last.stopReason === 'aborted' ? 'stopped'
         : last?.role === 'assistant' && last.stopReason === 'error' ? 'failed' : 'completed');
-      info.report = last?.role === 'assistant' && (last.stopReason === 'error' || last.stopReason === 'aborted')
-        ? `Task ${last.stopReason}: ${last.errorMessage ?? 'No details'}` : session.getLastAssistantText() || 'Finished without a text report.';
+      const text = session.getLastAssistantText();
+      info.report = info.state === 'stopped' && live.stoppedBy ? `${STOPPED[live.stoppedBy]}${text ? `\n\nIts last message before the stop:\n${text}` : ''}`
+        : last?.role === 'assistant' && (last.stopReason === 'error' || last.stopReason === 'aborted') ? `Task ${last.stopReason}: ${last.errorMessage ?? 'No details'}` : text || 'Finished without a text report.';
     } catch (error) {
-      transition(info, info.state === 'stopping' ? 'stopped' : 'failed'); info.report = `${info.state}: ${String(error)}`;
+      transition(info, info.state === 'stopping' ? 'stopped' : 'failed');
+      info.report = info.state === 'stopped' && live.stoppedBy ? STOPPED[live.stoppedBy] : `${info.state}: ${String(error)}`;
     } finally {
       const children = this.directChildren(info.id);
-      await Promise.allSettled(children.map(child => this.stop(child.info.id)));
+      await Promise.allSettled(children.map(child => this.stop(child.info.id, 'parent')));
       await Promise.allSettled(children.flatMap(child => child.completion ? [child.completion] : []));
       info.ended = Date.now();
       for (const g of info.guidance) if (g.state === 'queued') g.state = 'undelivered';
@@ -604,7 +616,8 @@ export class Children {
     await this.report(handoff.text, { once: true });
     handoff.delivered = true; this.save(run);
   }
-  async stop(id: string) {
+  /** Ends a run and its descendants; `cause` is said in its report (the user's Ctrl+X by default). */
+  async stop(id: string, cause: StopCause = 'user') {
     const live = this.running.get(id);
     if (!live) throw new Error(`No running subagent ${id}.`);
     const descendants: LiveRun[] = [];
@@ -612,6 +625,7 @@ export class Children {
     collect(live);
     const stopping = descendants.filter(run => transition(run.info, 'stopping'));
     for (const run of stopping) {
+      run.stoppedBy ??= run === live ? cause : 'parent';
       if (run.info.connected) run.info.handoff ??= { reason: 'owner-stopped' };
       run.wake?.();
       try { this.save(run.info); } catch (error) { this.warn(`Could not save stop status: ${String(error)}`); }
@@ -650,7 +664,7 @@ export class Children {
     this.closing = true;
     // Only work in progress is picked up at the next start: not paused runs waiting for the user, runs being stopped, or connected windows (they hand off).
     for (const { info } of this.running.values()) if (!info.connected && (info.state === 'running' || info.state === 'waiting')) info.cutOff = true;
-    await Promise.allSettled([...this.running.keys()].map(id => this.stop(id)));
+    await Promise.allSettled([...this.running.keys()].map(id => this.stop(id, 'pi')));
     await Promise.allSettled(this.launches);
     await Promise.allSettled(this.completions);
   }

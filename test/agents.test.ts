@@ -172,10 +172,11 @@ test('one spawn\'s reports arrive together once its last child finishes, also to
     await until(() => state(a) === 'completed' && state(stopped) === 'stopped');
     await new Promise(r => setTimeout(r, 50));
     assert.deepEqual(reports, [], 'nothing is delivered while a sibling still runs');
-    assert.deepEqual(held.at(-1), [`[${a}] a done`, `[${stopped}] stopped done`], 'finished reports are journaled at once, so a crash cannot lose them');
+    const stopReport = `[${stopped}] Stopped by the user. They ended it on purpose, so it did not fail: do not redo or delegate this task again unless they ask. Its chat is kept, so tell resumes it where it stopped.\n\nIts last message before the stop:\nstopped done`;
+    assert.deepEqual(held.at(-1), [`[${a}] a done`, stopReport], 'finished reports are journaled at once, so a crash cannot lose them');
     releases.get('b')!();
     await until(() => !children.active);
-    assert.deepEqual(reports, [`[${a}] a done\n\n[${b}] b done\n\n[${stopped}] stopped done`], 'one message, in spawn order');
+    assert.deepEqual(reports, [`[${a}] a done\n\n[${b}] b done\n\n${stopReport}`], 'one message, in spawn order');
     assert.deepEqual(counts, [3]);
     assert.deepEqual(held.at(-1), [], 'delivered, the held reports leave the journal');
     const journaled = held.length;

@@ -87,6 +87,37 @@ test('a busy profile offers to connect or pick another profile, and picking anot
   }
 });
 
+test('a connected window whose original window closed can leave: /new, /resume, /fork and /optchat profile work again', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-left-'));
+  const oldHome = process.env.OPTCHAT_HOME;
+  process.env.OPTCHAT_HOME = join(dir, 'home');
+  let owner: Awaited<ReturnType<typeof start>>['session'] | undefined, window: Awaited<ReturnType<typeof start>>['session'] | undefined;
+  try {
+    createProfile('busy');
+    owner = (await start(dir, {}, 'busy')).session;
+    const notes: string[] = [], asked: string[] = [];
+    const picks = ['Start a connected subagent conversation here', undefined];
+    window = (await start(dir, { notify: text => { notes.push(text); }, select: async title => { asked.push(title.split('\n')[0]); return picks.shift(); } }, 'busy')).session;
+    const switchBlocked = async () => (await window!.extensionRunner.emit({ type: 'session_before_switch', reason: 'new' }))?.cancel === true;
+    const forkBlocked = async () => (await window!.extensionRunner.emit({ type: 'session_before_fork', entryId: 'x', position: 'at' }))?.cancel === true;
+    assert.equal(await switchBlocked(), true, 'a live connected conversation keeps its window');
+
+    await owner.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); owner.dispose(); owner = undefined;
+    for (let i = 0; i < 200 && !notes.some(n => n.startsWith('Connection closed')); i++) await sleep(10);
+    assert.ok(notes.some(n => n.startsWith('Connection closed')), 'the window saw the owner go');
+    assert.equal(await switchBlocked(), false, '/new and /resume are no longer cancelled');
+    assert.equal(await forkBlocked(), false, '/fork and /clone are no longer cancelled');
+    await window.prompt('/optchat profile');
+    assert.deepEqual(asked, ['busy is open in another window', 'OptChat profile'], '/optchat profile offers the profile picker');
+    assert.ok(!notes.some(n => n.includes('original window')), 'no pointer to a window that is gone');
+  } finally {
+    for (const session of [owner, window]) if (session) { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); session.dispose(); }
+    await sleep(50);
+    if (oldHome === undefined) delete process.env.OPTCHAT_HOME; else process.env.OPTCHAT_HOME = oldHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('a client that hangs up early does not crash the process holding the lock', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-lock-'));
   const unlock = await lockProfile(dir, 'holder');

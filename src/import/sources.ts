@@ -437,8 +437,9 @@ export async function readConversation(c: Conversation, signal?: AbortSignal): P
         if (c.source === 'claude' && v.type === 'system' && v.subtype === 'compact_boundary') { pending = []; continue; }
         if (c.source === 'claude' && (v.isMeta === true || v.isCompactSummary === true)) continue;
         if (c.source === 'claude' && v.isSidechain === true) return { entries: [], warnings };
-        // A message typed while Claude works is logged as an attachment and sent with the next request. Claude Code shows it as
-        // the user's when it is a prompt without isMeta from a human or no origin; the rest are task and agent notifications.
+        // A message typed while Claude works is logged as an attachment and sent with the next request. Only a prompt without
+        // isMeta from a human or no origin passes both of Claude Code's checks for a user's message (its display filter and X4t);
+        // the rest are task and agent notifications.
         const queued = c.source === 'claude' && v.type === 'attachment' ? v.attachment : undefined;
         if (record(queued) && queued.type === 'queued_command' && queued.commandMode === 'prompt' && queued.isMeta !== true
           && (queued.origin === undefined || record(queued.origin) && queued.origin.kind === 'human')) {

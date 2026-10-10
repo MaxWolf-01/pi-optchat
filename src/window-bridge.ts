@@ -218,7 +218,7 @@ export async function connectWindow(directory: string, event: (event: WindowEven
   }).catch((error: unknown) => {
     const code = record(error) ? error.code : undefined;
     throw code === 'ENOENT' || code === 'ECONNREFUSED'
-      ? new Error('No running OptChat session on this profile accepts connections. A headless run (pi -p) holding it does not accept connections; try again when it finishes.') : error;
+      ? new Error('No running OptChat session on this profile accepts connections. A headless run (pi -p) holding it does not accept connections; once it exits, open the profile instead.', { cause: error }) : error;
   });
   socket.setTimeout(0);
   return {

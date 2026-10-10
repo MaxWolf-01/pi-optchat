@@ -37,7 +37,7 @@ The footer shows the active profile. Memory follows the profile across directori
 
 For headless use (`pi -p`, `--mode rpc`, other extensions' runners), pass `--optchat-profile work`. Without it, and without a saved profile in a resumed session, a headless run is plain Pi with no OptChat memory. If the requested profile can't open (misspelled, deleted, or open in another Pi), the run reports the error and doesn't answer.
 
-If that profile is open in another Pi, `pi -p` joins it like a connected window: a subagent in that Pi answers, only its final reply goes to stdout, and the main agent gets the handoff. `--optchat-connect auto` (default) joins only when the profile is busy, `join` always joins (and fails if no Pi has the profile open), `off` reports the busy profile as an error. A failed join exits non-zero. A profile held by another `pi -p` (or JSON-mode) run can't be joined: that run exits after its own prompt, so it accepts no connections, and the join fails until it finishes.
+If that profile is open in another Pi, `pi -p` joins it like a connected window: a subagent in that Pi answers, only its final reply goes to stdout, and the main agent gets the handoff. `--optchat-connect auto` (default) joins only when the profile is busy, `join` always joins (and fails if no Pi has the profile open), `off` reports the busy profile as an error. A failed join exits non-zero. A profile held by another `pi -p` (or JSON-mode) run can't be joined, since that run exits after its own prompt. Once it exits, `auto` opens the profile itself; `join` still fails, as no Pi has it open.
 
 ## Commands
 

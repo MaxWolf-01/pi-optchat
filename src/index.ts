@@ -17,6 +17,7 @@ import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExcha
 import { registerReportRenderer, type ReportDetails } from './report-message.ts';
 import { memoryTools, result, searchTool } from './tools.ts';
 import { Children, CWD_DOC, loadedBuiltins } from './agents.ts';
+import { isActiveRun, type RunInfo } from './runs.ts';
 import { exportBrowser } from './browser.ts';
 import { Inbox } from './inbox.ts';
 import { checkpoint } from './checkpoint.ts';
@@ -285,13 +286,19 @@ export default function optchat(pi: ExtensionAPI) {
   // Pi shows nothing when a switch is cancelled, so say why and what lets it through.
   const blockSwitch = (command: string, ctx: ExtensionContext) => {
     const children = active?.children, runs = children?.active ? children.ids.flatMap(id => children.live(id)?.info ?? []) : [];
-    const it = runs.length === 1 ? 'it' : 'them';
+    const label = (run: RunInfo) => !isActiveRun(run) ? 'finishing' : run.connected ? 'connected window'
+      : run.state === 'paused' ? 'interrupted, waiting for you' : run.state === 'stopping' ? 'stopping' : 'working';
+    const own = runs.filter(run => !run.connected), it = own.length === 1 ? 'it' : 'them';
+    const how = [
+      ...own.length ? [own.some(run => run.state === 'paused') ? `Open ${it} in /optchat agents and message ${it} to resume, or press Ctrl+X twice to stop.`
+        : `Wait for ${it} to finish, or open ${it} in /optchat agents and press Ctrl+X twice.`] : [],
+      ...runs.length > own.length ? [own.length || runs.length > 1 ? 'A connected window\'s agent ends when its window runs /complete or closes.' : 'It ends when that window runs /complete or closes.'] : [],
+    ];
     const why = remote ? 'in a connected window. Run /complete to end this conversation, then open a new Pi window.'
       : importing ? 'while an import is open. Close the import dialog or pause the import (Escape), then try again.'
       : !children?.active ? undefined
       : !runs.length ? 'while agents are starting or finishing. Try again in a moment.'
-      : `while ${runs.length === 1 ? '1 agent is' : `${runs.length} agents are`} active: ${runs.map(run => `${run.id} (${run.state === 'paused' ? 'interrupted, waiting for you' : run.state === 'stopping' ? 'stopping' : 'working'})`).join(', ')}. `
-        + (runs.some(run => run.state === 'paused') ? `Open /optchat agents to message ${it} or stop ${it} (Ctrl+X twice).` : `Wait for ${it} to finish, or stop ${it} from /optchat agents (Ctrl+X twice).`);
+      : `while ${runs.length === 1 ? '1 agent is' : `${runs.length} agents are`} active: ${runs.map(run => `${run.id} (${label(run)})`).join(', ')}. ${how.join(' ')}`;
     if (!why) return undefined;
     ctx.ui.notify(`${command} is blocked ${why}`, 'warning');
     return { cancel: true };

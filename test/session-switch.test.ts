@@ -77,15 +77,20 @@ test('a blocked /new, /resume, /fork or /clone says why and what lets it through
     const profile = profilePath('fixture'), fixture = { provider: 'fixture', model: 'fixture', thinking: 'off' as const };
     saveConfig(profile, { ...loadConfig(profile), compactor: fixture, subagent: fixture });
     let pick = (_choice: string | undefined) => {}, picking = false;
-    let agent = '', pages = 0;
-    // `/optchat agents`: the Agents page opens the agent, whose view takes Ctrl+C (interrupt, nothing queued), then Esc.
+    let agent = '', keys: string[] = [], onPage = false;
+    // `/optchat agents`: the Agents page opens `agent`, whose view takes `keys` and closes on Esc.
     const custom = (async (factory: Parameters<ExtensionUIContext['custom']>[0]) => {
-      if (pages++ === 0) return { open: agent };
+      if ((onPage = !onPage)) return { open: agent };
+      const pressed = [...keys, '\x1b'];
       return new Promise<unknown>(resolve => {
         const view = factory(new TuiMainScreen(new OffscreenTerminal()), { fg: (_tone: string, text: string) => text } as never, { matches: () => false } as never, resolve);
-        void Promise.resolve(view).then(v => { v.handleInput?.('\x03'); v.handleInput?.('\x1b'); });
+        void Promise.resolve(view).then(v => { for (const key of pressed) v.handleInput?.(key); });
       });
     }) as ExtensionUIContext['custom'];
+    const agents = async (pressed: string[]) => {
+      keys = pressed;
+      await owner.session.prompt('/optchat agents');
+    };
     const owner = await start(join(dir, 'owner'), { custom, select: async (_title, _options, opts) => {
       picking = true;
       return new Promise<string | undefined>(resolve => { pick = resolve; opts?.signal?.addEventListener('abort', () => resolve(undefined), { once: true }); });
@@ -113,25 +118,40 @@ test('a blocked /new, /resume, /fork or /clone says why and what lets it through
       assert.equal(result.cancel, true, `${command} is blocked while an agent works`);
       assert.equal(result.notes.length, 1, `${command} says why`);
       assert.match(result.notes[0], new RegExp(`^${command} is blocked while 1 agent is active: [0-9a-f]{8} \\(working\\)\\. `));
-      assert.match(result.notes[0], /Wait for it to finish, or stop it from \/optchat agents \(Ctrl\+X twice\)\.$/);
+      assert.match(result.notes[0], /Wait for it to finish, or open it in \/optchat agents and press Ctrl\+X twice\.$/);
     }
 
     agent = /[0-9a-f]{8}/.exec((await owner.blocked({ type: 'session_before_switch', reason: 'new' })).notes[0])![0];
-    await owner.session.prompt('/optchat agents');
-    let paused = '';
-    for (let i = 0; i < 200 && !paused.includes('interrupted'); i++) {
-      paused = (await owner.blocked({ type: 'session_before_switch', reason: 'new' })).notes[0];
-      await new Promise(r => setTimeout(r, 10));
-    }
-    assert.equal(paused, `/new is blocked while 1 agent is active: ${agent} (interrupted, waiting for you). Open /optchat agents to message it or stop it (Ctrl+X twice).`,
+    const newSession = { type: 'session_before_switch', reason: 'new' } as const;
+    const waitFor = async (done: (note: string | undefined) => boolean) => {
+      let note: string | undefined;
+      for (let i = 0; i < 200; i++) {
+        note = (await owner.blocked(newSession)).notes[0];
+        if (done(note)) break;
+        await new Promise(r => setTimeout(r, 10));
+      }
+      return note;
+    };
+    await agents(['\x03']);
+    assert.equal(await waitFor(note => !!note?.includes('interrupted')),
+      `/new is blocked while 1 agent is active: ${agent} (interrupted, waiting for you). Open it in /optchat agents and message it to resume, or press Ctrl+X twice to stop.`,
       'a paused agent the user forgot is named, with how to resume or stop it');
+
+    await agents(['\x18', '\x18']);
+    assert.equal(await waitFor(note => note === undefined), undefined, 'once the agent has stopped, /new goes through again');
+    assert.deepEqual(await owner.blocked(newSession), { cancel: false, notes: [] });
 
     const window = await start(join(dir, 'window'), { select: async (_title, options) => options.find(o => o.startsWith('Start a connected')) });
     sessions.push(window.session);
-    const connected = await window.blocked({ type: 'session_before_switch', reason: 'new' });
+    const connected = await window.blocked(newSession);
     assert.equal(connected.cancel, true);
     assert.equal(connected.notes.length, 1);
     assert.match(connected.notes[0], /^\/new is blocked in a connected window\. Run \/complete/);
+
+    await window.session.prompt('Work until stopped.');
+    const owned = await waitFor(note => !!note);
+    assert.match(owned ?? '', /^\/new is blocked while 1 agent is active: [0-9a-f]{8} \(connected window\)\. It ends when that window runs \/complete or closes\.$/,
+      'a connected conversation is not something to wait for or stop from here');
   } finally {
     for (const session of sessions.reverse()) { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); session.dispose(); }
     if (oldHome === undefined) delete process.env.OPTCHAT_HOME; else process.env.OPTCHAT_HOME = oldHome;

@@ -282,8 +282,8 @@ export default function optchat(pi: ExtensionAPI) {
   });
   pi.on('session_info_changed', () => title.reapply()); // Pi retitles the tab on session renames, just before this.
   pi.on('session_shutdown', stop);
-  pi.on('session_before_switch', () => remote || importing || active?.children.active ? { cancel: true } : undefined);
-  pi.on('session_before_fork', () => remote || importing || active?.children.active ? { cancel: true } : undefined);
+  pi.on('session_before_switch', () => remote && !remote.ended || importing || active?.children.active ? { cancel: true } : undefined);
+  pi.on('session_before_fork', () => remote && !remote.ended || importing || active?.children.active ? { cancel: true } : undefined);
   pi.on('input', async (event, ctx) => {
     if (joined) {
       try {
@@ -479,7 +479,7 @@ export default function optchat(pi: ExtensionAPI) {
   };
   pi.registerShortcut(shortcut, { description: 'Inspect OptChat agents, usage and background activity', handler: ctx => inspect(ctx, 'agents') });
   const command = async (args: string, ctx: ExtensionCommandContext): Promise<void> => {
-    if (remote) { ctx.ui.notify('Manage this profile in its original window. Here use /tell-main or /complete.', 'info'); return; }
+    if (remote && !remote.ended) { ctx.ui.notify('Manage this profile in its original window. Here use /tell-main or /complete.', 'info'); return; }
     if (importing) throw new Error('Close the import dialog before changing profile settings.');
     let action = args.trim();
     if (!action) {

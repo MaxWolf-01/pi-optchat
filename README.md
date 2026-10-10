@@ -187,6 +187,7 @@ Each profile is locked to one Pi process. If you open the same profile in a seco
 - Run `/complete` when done. The window closes, remaining work stops, and the compactor writes a handoff for the main agent: decisions, changes, evidence, failures, unfinished work, and links to the transcripts.
 - Closing or force-quitting the window also produces a handoff, marked **interrupted**.
 - If the original window is closed cleanly, handoffs are delivered on next start. If it is killed, reopening the profile recovers unfinished handoffs (work is not restarted).
+- Closing the original window, or running `/reload` in it, ends every connected conversation; Pi gives no chance to warn before a reload. The connected window then shows **disconnected**, and `/new` there starts over: it connects again, or opens the profile once it is free.
 - Text only. For images, give the agent a file path.
 - The connection is a local socket restricted to your OS user. No daemon or server.
 

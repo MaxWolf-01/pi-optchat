@@ -119,13 +119,15 @@ export async function openConnectedWindow(pi: ExtensionAPI, ctx: ExtensionContex
     if (ended) return;
     ended = true; commit(); hideLive();
     ctx.ui.setStatus('optchat', `OptChat: ${profile} · disconnected`); title('disconnected');
-    ctx.ui.notify('Connection closed. The owner saves the interrupted conversation and handoff; no local agent will run here.', 'info');
+    ctx.ui.notify('Connection closed. The owner saves the interrupted conversation and handoff. Use /new to continue: it connects again, or opens the profile here once it is free.', 'info');
   });
   ctx.ui.setStatus('optchat', `OptChat: ${profile} · connected window · send a task to start`); title('waiting');
   display(`Connected to ${profile}'s original window. Messages here go to one subagent using the profile's subagent model. /tell-main sends a message to the main agent; /complete ends this conversation and sends a handoff. Closing this window interrupts it.`);
   return {
+    /** Ended by /complete, by the owner, or by losing the owner: nothing left here to protect from a session switch. */
+    get ended() { return ended; },
     async submit(text: string) {
-      if (ended) throw new Error('Conversation ended. Open a new Pi window to start another.');
+      if (ended) throw new Error('Conversation ended. Use /new to start another.');
       await connection.request(started ? 'say' : 'start', text, ctx.cwd);
     },
     async tell(text: string) { await connection.request('tell-main', text); },

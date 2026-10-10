@@ -584,6 +584,36 @@ test('a message sent while an interrupt is still settling is not lost; a stop du
   } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a stopped agent\'s report says who stopped it and that tell resumes it', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-stop-report-'));
+  const reports: string[] = [];
+  const { children, asked, memory } = await busyChildren(dir, reports);
+  const report = (id: string) => reports.findLast(r => r.startsWith(`[${id}]`));
+  try {
+    const [busy, idle] = await children.spawn([{ task: 'busy' }, { task: 'idle' }], dir);
+    const [boss] = await children.spawn([{ task: 'boss' }], dir);
+    const [worker] = await children.spawn([{ task: 'worker' }], dir, undefined, boss);
+    await until(() => asked.length === 4);
+    await children.stop(busy);
+    await until(() => report(busy) !== undefined);
+    assert.match(report(busy)!, new RegExp(`^\\[${busy}\\] Stopped by the user\\. .*do not redo or delegate this task again unless they ask\\. .*tell resumes it`), 'Ctrl+X reads as the user\'s choice, not a failure');
+    assert.match(await children.tell(busy, 'Carry on.'), /resumed it/);
+    await until(() => report(busy) === `[${busy}] Now doing: Carry on.`);
+
+    await children.stop(boss);
+    await until(() => report(boss) !== undefined && children.history.records.get(worker)?.state === 'stopped');
+    assert.match(report(boss)!, /Stopped by the user\./);
+    assert.match(children.history.records.get(worker)?.report ?? '', /^Stopped because the agent that started it stopped or ended\./, 'a descendant records why it stopped');
+
+    assert.equal(await children.interrupt(idle), 'paused');
+    await until(() => children.history.records.get(idle)?.state === 'paused');
+    await children.close();
+    const closed = memory.root.filter(e => e.kind === 'work' && e.text.startsWith(`[${idle}]`)).map(e => withoutFullChat(e.text));
+    assert.equal(closed.length, 1);
+    assert.match(closed[0], /^\[\w+\] Stopped because Pi closed or reloaded while it waited for the user\. It is not resumed on its own; .*tell resumes it/, 'a paused run Pi stops on close says so, since it is not resumed on its own');
+  } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the user can take their newest queued message back; the rest stays queued in order', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-withdraw-'));
   const { children, asked } = await busyChildren(dir, []);

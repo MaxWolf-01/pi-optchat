@@ -16,5 +16,7 @@ export async function checkpoint(directory: string) {
   if (!status.stdout.trim()) return;
   await git(['-c', 'user.name=OptChat', '-c', 'user.email=optchat@localhost', '-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'Save OptChat memory']);
   const loose = Number(/^size: (\d+)$/m.exec((await git(['count-objects', '-v'])).stdout)?.[1]);
-  if (loose > LOOSE_LIMIT_KIB) await git(['gc', '--quiet']);
+  // Cruft packs keep young unreachable objects packed instead of loose, which is the default only from git 2.40; without them every later checkpoint would gc again.
+  // A failed gc, such as one blocked by another gc's lock, loses nothing: the commit has landed and the next checkpoint tries again.
+  if (loose > LOOSE_LIMIT_KIB) await git(['-c', 'gc.cruftPacks=true', 'gc', '--quiet']).catch(() => {});
 }

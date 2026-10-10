@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkpoint } from '../src/checkpoint.ts';
 
@@ -34,5 +34,16 @@ test('a day of checkpoints keeps .git near the size of the log, not one copy of 
     const kib = (key: string) => Number(new RegExp(`^${key}: (\\d+)$`, 'm').exec(counts)![1]);
     assert.equal(execFileSync('git', ['-C', dir, 'rev-list', '--count', 'HEAD'], { encoding: 'utf8' }).trim(), '12');
     assert.ok(kib('size') + kib('size-pack') < 24 * 1024, `.git holds ${kib('size')} KiB loose and ${kib('size-pack')} KiB packed for a 4 MB log`);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a checkpoint whose commit lands resolves even when git cannot pack afterwards', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-checkpoint-'));
+  try {
+    execFileSync('git', ['-C', dir, 'init', '-q', '-b', 'main']);
+    writeFileSync(join(dir, '.git', 'gc.pid'), `${process.pid} ${hostname()}`);
+    writeFileSync(join(dir, 'big.bin'), randomBytes(17_000_000));
+    await checkpoint(dir);
+    assert.equal(execFileSync('git', ['-C', dir, 'log', '--format=%s'], { encoding: 'utf8' }).trim(), 'Save OptChat memory');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

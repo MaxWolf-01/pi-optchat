@@ -32,7 +32,7 @@ export interface LiveRun {
   /** Why stop() ended it; the first stop wins. Unset for a connected run: its handoff says how it ended, and it cannot be resumed. */
   stoppedBy?: StopCause;
 }
-/** `parent`: the agent that started it was stopped, or ended while it still worked. `pi`: Pi closed or reloaded while it was paused (working runs are cut off and resumed instead). */
+/** `parent`: the agent that started it was stopped, or ended while it still worked. `pi`: Pi closed or reloaded while it was paused (working runs are cut off and resumed instead); a paused child whose parent still works gets `parent`, since close() stops that parent, which marks its descendants first. */
 type StopCause = 'user' | 'parent' | 'pi';
 // Said plainly: the aborted request's own error names no cause and reads as a failure.
 const STOPPED: Record<StopCause, string> = {

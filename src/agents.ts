@@ -29,7 +29,7 @@ export interface LiveRun {
   requeueing?: Promise<void>;
   /** Shared by the children of one spawn whose reports are delivered together, in spawn order. */
   batch?: { ids: string[]; reports: Map<string, string> };
-  /** Why stop() ended it; the first stop wins. */
+  /** Why stop() ended it; the first stop wins. Unset for a connected run: its handoff says how it ended, and it cannot be resumed. */
   stoppedBy?: StopCause;
 }
 /** `parent`: the agent that started it was stopped, or ended while it still worked. `pi`: Pi closed or reloaded while it was paused (working runs are cut off and resumed instead). */
@@ -625,8 +625,8 @@ export class Children {
     collect(live);
     const stopping = descendants.filter(run => transition(run.info, 'stopping'));
     for (const run of stopping) {
-      run.stoppedBy ??= run === live ? cause : 'parent';
       if (run.info.connected) run.info.handoff ??= { reason: 'owner-stopped' };
+      else run.stoppedBy ??= run === live ? cause : 'parent';
       run.wake?.();
       try { this.save(run.info); } catch (error) { this.warn(`Could not save stop status: ${String(error)}`); }
     }

@@ -37,7 +37,7 @@ The footer shows the active profile. Memory follows the profile across directori
 
 For headless use (`pi -p`, `--mode rpc`, other extensions' runners), pass `--optchat-profile work`. Without it, and without a saved profile in a resumed session, a headless run is plain Pi with no OptChat memory. If the requested profile can't open (misspelled, deleted, or open in another Pi), the run reports the error and doesn't answer.
 
-If that profile is open in another Pi, `pi -p` joins it like a connected window: a subagent in that Pi answers, only its final reply goes to stdout, and the main agent gets the handoff. `--optchat-connect auto` (default) joins only when the profile is busy, `join` always joins (and fails if no Pi has the profile open), `off` reports the busy profile as an error. A failed join exits non-zero.
+If that profile is open in another Pi, `pi -p` joins it like a connected window: a subagent in that Pi answers, only its final reply goes to stdout, and the main agent gets the handoff. `--optchat-connect auto` (default) joins only when the profile is busy, `join` always joins (and fails if no Pi has the profile open), `off` reports the busy profile as an error. A failed join exits non-zero. A profile held by another `pi -p` (or JSON-mode) run can't be joined: that run exits after its own prompt, so it accepts no connections, and the join fails until it finishes.
 
 ## Commands
 
@@ -178,7 +178,7 @@ See OpenAI's guides on [exporting ChatGPT data](https://help.openai.com/en/artic
 
 ## Connected windows
 
-Each profile is locked to one Pi process. If you open the same profile in a second terminal, Pi offers to connect it to the original window as a subagent, or to go back to the profile picker.
+Each profile is locked to one Pi process. If you open the same profile in a second terminal, Pi offers to connect it to the original window as a subagent, or to go back to the profile picker. Only an interactive or RPC Pi accepts connections; a headless `pi -p` run holding the profile does not.
 
 - Your first message starts a subagent in the second window's working directory. Later messages continue the same conversation.
 - The window looks like a normal Pi chat: replies, tool calls with their output and running time, the working spinner, and reports from the subagent's own agents in the dark box. Ctrl+O expands tool output.

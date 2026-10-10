@@ -215,6 +215,10 @@ export async function connectWindow(directory: string, event: (event: WindowEven
   await new Promise<void>((resolve, reject) => {
     socket.once('connect', resolve); socket.once('error', reject);
     socket.setTimeout(5000, () => socket.destroy(new Error('Profile owner did not respond')));
+  }).catch((error: unknown) => {
+    const code = record(error) ? error.code : undefined;
+    throw code === 'ENOENT' || code === 'ECONNREFUSED'
+      ? new Error('No running OptChat session on this profile accepts connections. A headless run (pi -p) holding it does not accept connections; try again when it finishes.') : error;
   });
   socket.setTimeout(0);
   return {
@@ -245,10 +249,7 @@ export async function joinHeadless(directory: string) {
     // waits for the owner's user instead, and a finished one ends with `finished` once its last messages are sent.
     else if (event.name === 'status' && event.live?.state === 'waiting' && !event.live.agents) settle({});
     else if (event.name === 'finished') settle({ ended: event.text });
-  }, () => settle({ lost: true })).catch((error: unknown) => {
-    const code = record(error) ? error.code : undefined;
-    throw code === 'ENOENT' || code === 'ECONNREFUSED' ? new Error('No running OptChat session on this profile to join') : error;
-  });
+  }, () => settle({ lost: true }));
   let asked = false;
   return {
     async ask(text: string, cwd: string) {

@@ -282,8 +282,22 @@ export default function optchat(pi: ExtensionAPI) {
   });
   pi.on('session_info_changed', () => title.reapply()); // Pi retitles the tab on session renames, just before this.
   pi.on('session_shutdown', stop);
-  pi.on('session_before_switch', () => remote || importing || active?.children.active ? { cancel: true } : undefined);
-  pi.on('session_before_fork', () => remote || importing || active?.children.active ? { cancel: true } : undefined);
+  // Pi shows nothing when a switch is cancelled, so say why and what lets it through.
+  const blockSwitch = (command: string, ctx: ExtensionContext) => {
+    const children = active?.children, runs = children?.active ? children.ids.flatMap(id => children.live(id)?.info ?? []) : [];
+    const it = runs.length === 1 ? 'it' : 'them';
+    const why = remote ? 'in a connected window. Run /complete to end this conversation, then open a new Pi window.'
+      : importing ? 'while an import is open. Close the import dialog or pause the import (Escape), then try again.'
+      : !children?.active ? undefined
+      : !runs.length ? 'while agents are starting or finishing. Try again in a moment.'
+      : `while ${runs.length === 1 ? '1 agent is' : `${runs.length} agents are`} active: ${runs.map(run => `${run.id} (${run.state === 'paused' ? 'interrupted, waiting for you' : run.state === 'stopping' ? 'stopping' : 'working'})`).join(', ')}. `
+        + (runs.some(run => run.state === 'paused') ? `Open /optchat agents to message ${it} or stop ${it} (Ctrl+X twice).` : `Wait for ${it} to finish, or stop ${it} from /optchat agents (Ctrl+X twice).`);
+    if (!why) return undefined;
+    ctx.ui.notify(`${command} is blocked ${why}`, 'warning');
+    return { cancel: true };
+  };
+  pi.on('session_before_switch', (event, ctx) => blockSwitch(event.reason === 'new' ? '/new' : '/resume', ctx));
+  pi.on('session_before_fork', (event, ctx) => blockSwitch(event.position === 'at' ? '/clone' : '/fork', ctx));
   pi.on('input', async (event, ctx) => {
     if (joined) {
       try {

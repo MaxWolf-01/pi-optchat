@@ -615,6 +615,24 @@ test('a stopped agent\'s report says who stopped it and that tell resumes it', a
   } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a child still at work when its parent\'s run throws is stopped, and its report says its parent ended', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-stop-parent-'));
+  const reports: string[] = [];
+  const { children, asked } = await busyChildren(dir, reports);
+  try {
+    const [boss] = await children.spawn([{ task: 'boss' }], dir);
+    const [worker] = await children.spawn([{ task: 'worker' }], dir, undefined, boss);
+    await until(() => asked.length === 2);
+    children.live(boss)!.session.prompt = async () => { throw new Error('boom'); };
+    await children.tell(boss, 'Go on.', 'user');
+    assert.equal(await children.interrupt(boss), 'continued');
+    await until(() => !children.active);
+    assert.equal(children.history.records.get(boss)?.state, 'failed');
+    assert.equal(children.history.records.get(worker)?.state, 'stopped');
+    assert.match(children.history.records.get(worker)?.report ?? '', /^Stopped because the agent that started it stopped or ended\./, 'not taken for a user stop');
+  } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the user can take their newest queued message back; the rest stays queued in order', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-withdraw-'));
   const { children, asked } = await busyChildren(dir, []);

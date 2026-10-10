@@ -395,6 +395,7 @@ test('long handoffs fold all transcript chunks, and a failed summarizer still re
     await f.children.finish(id, 'disconnected');
     assert.match(f.reports.at(-1) ?? '', /interrupted \(disconnected\)/);
     assert.match(f.reports.at(-1) ?? '', /Automatic summary unavailable.*Synthetic summarizer unavailable/);
+    assert.doesNotMatch(f.reports.at(-1) ?? '', /Stopped by the user|tell resumes it/, 'a window that ends is not stopped by the user, and resume refuses connected runs');
     assert.match(f.reports.at(-1) ?? '', /Full transcript:/);
     assert.equal(info.handoff?.delivered, true);
   } finally { await f.close(); }

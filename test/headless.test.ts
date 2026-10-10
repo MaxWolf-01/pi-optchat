@@ -26,7 +26,7 @@ for (const name of ['work', 'personal']) {
 rememberProfile('personal');
 
 /** A headless Pi (print or RPC) whose model answers "OK to: <prompt>" and records what each call was sent. */
-async function headless(mode: 'print' | 'rpc', options: { flag?: string; bound?: string; connect?: string } = {}) {
+async function headless(mode: 'print' | 'rpc', options: { flag?: string; bound?: string; connect?: string; hold?: Promise<void> } = {}) {
   const dir = mkdtempSync(join(root, 's-'));
   const sent: string[] = [], errors: string[] = [];
   const runtime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, modelsStorePath: join(dir, 'models.json'), refreshOnCreate: false });
@@ -36,10 +36,11 @@ async function headless(mode: 'print' | 'rpc', options: { flag?: string; bound?:
     streamSimple(model, context) {
       sent.push(JSON.stringify(context.messages));
       const last = context.messages.at(-1);
-      const message: AssistantMessage = { role: 'assistant', content: [{ type: 'text', text: `OK to: ${textContent(last && 'content' in last ? last.content : '')}` }],
+      const prompt = textContent(last && 'content' in last ? last.content : '');
+      const message: AssistantMessage = { role: 'assistant', content: [{ type: 'text', text: `OK to: ${prompt}` }],
         api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), stopReason: 'stop', usage: emptyUsage() };
       const stream = createAssistantMessageEventStream();
-      queueMicrotask(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: 'stop', message }); stream.end(); });
+      void ((prompt.includes('slow') ? options.hold : undefined) ?? Promise.resolve()).then(() => { stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: 'stop', message }); stream.end(); });
       return stream;
     },
   });
@@ -106,4 +107,28 @@ test('a requested profile that cannot open fails visibly and does not run withou
       } finally { await pi.close(); }
     }
   } finally { process.exitCode = undefined; await unlock(); }
+});
+
+test('a second pi -p on a profile a headless run owns fails up front, instead of joining and dying when the owner exits', async () => {
+  let release = () => {};
+  const owner = await headless('print', { flag: 'work', hold: new Promise<void>(resolve => { release = resolve; }) });
+  const stderr: string[] = [], write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (chunk: string | Uint8Array) => { stderr.push(String(chunk)); return true; };
+  process.exitCode = undefined;
+  try {
+    const second = await headless('print', { flag: 'work' });
+    try {
+      // The joined task would run in the owner and wait there, so the owner exits mid-task, as `pi -p` does once its own prompt is answered.
+      const answer = second.ask('slow joined task');
+      let answered = false; void answer.finally(() => { answered = true; });
+      while (!answered && !owner.sent.some(s => s.includes('slow joined task'))) await new Promise(resolve => setTimeout(resolve, 10));
+      const closed = owner.close(); release(); await closed;
+      assert.equal(await answer, undefined);
+      assert.doesNotMatch(stderr.join(''), /Connection to the original Pi window was lost/);
+      assert.equal(second.errors.length, 1, 'the second run reports the busy profile when it starts');
+      assert.match(second.errors[0], /does not accept connections/);
+      assert.equal(process.exitCode, 1);
+      assert.ok(!owner.sent.some(s => s.includes('slow joined task')), 'nothing of the second run reached the owner');
+    } finally { await second.close(); }
+  } finally { process.stderr.write = write; process.exitCode = undefined; release(); await owner.close(); }
 });

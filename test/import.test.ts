@@ -169,6 +169,19 @@ test('legacy Claude replies survive tool loops while interrupted text and distin
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+const claudeFixture = fileURLToPath(new URL('./fixtures/claude-transcript.jsonl', import.meta.url));
+
+test('a current Claude Code transcript drops interrupt markers with their cut-off reply, and keeps messages typed while Claude works', async () => {
+  const parsed = await readConversation(conversation('claude', claudeFixture));
+  assert.deepEqual(parsed.entries.map(e => [e.kind, e.origin?.message]),
+    [['user', 'u1'], ['user', 'u2'], ['user', 'q1'], ['user', 'u3'], ['user', 'q4'], ['talk', 'a6:0']]);
+  assert.deepEqual(parsed.entries.filter(e => e.kind === 'user').map(e => e.text.slice(e.text.indexOf(']\n') + 2)),
+    ['Write the deploy plan for the sync service.', 'Shorter, three steps.', 'Also skip the staging step.', 'Go on without deploying.', 'And log each step.']);
+  assert.equal(parsed.entries[2].date, '2026-03-04T09:00:07.000Z');
+  assert.doesNotMatch(JSON.stringify(parsed.entries), /Request interrupted|step 1 of 12|task-notification|teammate-message/);
+  assert.deepEqual(parsed.warnings, []);
+});
+
 test('legacy Codex replies are superseded by later work and discarded on interruption', async () => {
   const dir = temp(), file = join(dir, 'legacy.jsonl');
   const message = (id: string, role: string, content: string, channel?: string) => ({ type: 'response_item', timestamp: date, payload: { type: 'message', id, role, content, channel } });

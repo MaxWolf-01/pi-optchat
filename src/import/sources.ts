@@ -437,9 +437,18 @@ export async function readConversation(c: Conversation, signal?: AbortSignal): P
         if (c.source === 'claude' && v.type === 'system' && v.subtype === 'compact_boundary') { pending = []; continue; }
         if (c.source === 'claude' && (v.isMeta === true || v.isCompactSummary === true)) continue;
         if (c.source === 'claude' && v.isSidechain === true) return { entries: [], warnings };
+        // A message typed while Claude works is logged as an attachment and sent with the next request. Claude Code shows it as
+        // the user's when it is a prompt without isMeta from a human or no origin; the rest are task and agent notifications.
+        const queued = c.source === 'claude' && v.type === 'attachment' ? v.attachment : undefined;
+        if (record(queued) && queued.type === 'queued_command' && queued.commandMode === 'prompt' && queued.isMeta !== true
+          && (queued.origin === undefined || record(queued.origin) && queued.origin.kind === 'human')) {
+          const typed = text(queued.prompt);
+          add(string(v.uuid) ?? `line:${line}`, 'user', claudeCommand(typed) ?? typed, date, typed);
+        }
         if (c.source === 'claude' && ['user', 'assistant'].includes(String(v.type)) && record(v.message)) {
           const m = v.message, id = string(v.uuid) ?? `line:${line}`;
-          if (m.role === 'user' && typeof m.content === 'string' && /^\[Request interrupted by user(?: for tool use)?\]$/.test(m.content)) { pending = []; continue; }
+          // Claude Code 2.1 writes the marker as a one-block text array, older versions as a string.
+          if (m.role === 'user' && /^\[Request interrupted by user(?: for tool use)?\]$/.test(text(m.content))) { pending = []; continue; }
           const blocks = Array.isArray(m.content) ? m.content : [];
           const toolActivity = blocks.some(b => record(b) && (['tool_use', 'server_tool_use', 'tool_result'].includes(String(b.type)) || String(b.type).endsWith('_tool_result')));
           if (toolActivity) pending = [];

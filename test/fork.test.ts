@@ -76,3 +76,14 @@ test('a merge forks the last finished turn\'s first request at once, even while 
   assert.deepEqual(messages.slice(2).map(m => m.role), ['assistant', 'user', 'system']);
   assert.match(messages[3].content[0].text!, /^Compaction: merge lines 0\+1 and 1\+1/);
 });
+
+test('a merge before any turn waits for the first one instead of going to the fallback', async () => {
+  const { sent, registry: models } = registry(['merged line']);
+  const turns = new Turns();
+  const merge: Compression = { context: 'unused', source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } };
+  const pending = createForkCompressor(models, turns, () => 'low', noFallback)(merge, AbortSignal.timeout(1000));
+  await new Promise(r => setTimeout(r, 20));
+  assert.equal(sent.length, 0);
+  turns.finish(turn);
+  assert.equal(await pending, 'merged line');
+});

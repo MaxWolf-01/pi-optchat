@@ -25,9 +25,17 @@ export class Turns {
   finish(turn?: Turn) {
     if (turn) this.last = turn;
     this.running?.end(); this.running = undefined;
+    if (this.last) for (const wake of this.waiting.splice(0)) wake();
   }
-  /** The last finished turn, even while another runs. */
-  get finished() { return this.last; }
+  private waiting: (() => void)[] = [];
+  /** The last finished turn, even while another runs; before the first, it waits for one. */
+  async finished(signal: AbortSignal) {
+    while (!this.last) {
+      signal.throwIfAborted();
+      await new Promise<void>(resolve => { this.waiting.push(resolve); signal.addEventListener('abort', () => resolve(), { once: true }); });
+    }
+    return this.last;
+  }
   /** The last finished turn once none runs, or undefined before the first. */
   async latest(signal: AbortSignal) {
     while (this.running) {
@@ -57,7 +65,8 @@ const text = (role: 'user' | 'assistant', value: string) => ({ role, content: [{
 export function createForkCompressor(registry: ModelRegistry, turns: Turns, effort: () => ThinkingLevel, fallback: Compressor,
   onUsage: (message: AssistantMessage) => void = () => {}, accepted = () => DEFAULT_SETTINGS.summaryAcceptBytes): Compressor {
   return async (input, signal) => {
-    const merge = input.part.l > 0, turn = merge ? turns.finished : await turns.latest(signal);
+    // Nothing waits on a merge, so before the first turn it waits for one; a message's line goes to `fallback`, since the turn waits on it.
+    const merge = input.part.l > 0, turn = merge ? await turns.finished(signal) : await turns.latest(signal);
     if (!turn) return fallback(input, signal);
     const base = merge ? turn.first : turn.payload;
     if (!Array.isArray(base.messages)) return fallback(input, signal);

@@ -280,7 +280,12 @@ export class Memory {
       : [0, 1].map(offset => this.text({ l: part.l - 1, i: 2 * part.i + offset })).join('\n');
     const mergeSource = part.l > 0 ? [0, 1].map(offset => flat(this.text({ l: part.l - 1, i: 2 * part.i + offset }))).join('\n') : source;
     const text = bytes(source) <= NODE ? source : (await this.compress({ context: this.compactionView(part), source: mergeSource, part,
-      historical: this.root.slice(start(part), end(part)).some(entry => !!entry.origin) }, this.controller.signal)).trim();
+      historical: this.root.slice(start(part), end(part)).some(entry => !!entry.origin) }, this.controller.signal).catch(error => {
+      // A safety refusal repeats on every retry, and every later summary waits on this one: stand in with the source's head.
+      if (!REFUSED.test(error instanceof Error ? error.message : String(error))) throw error;
+      this.warn(`Compactor ${start(part)}+${2 ** part.l}: refused by the safety filter, kept the source's head`);
+      return headLine(`[not summarized: the summarizer refused it; zoom for the original] ${flat(mergeSource)}`);
+    })).trim();
     if (this.stopped) return;
     if (!text) throw new Error('Compactor returned an empty summary.');
     const node = { ...part, text, size: lineBytes(text) };
@@ -372,4 +377,13 @@ export class Memory {
     this.stopped = true; this.controller.abort(); clearTimeout(this.retryTimer);
     this.events.emit('change'); await Promise.allSettled(this.busy.values()); await this.writing;
   }
+}
+
+/** An error a safety classifier raised, which no retry clears. */
+const REFUSED = /usage policy|violative/i;
+/** `text` cut to one view line of at most NODE bytes, between code points. */
+function headLine(text: string): string {
+  const all = Buffer.from(text);
+  if (all.length <= NODE) return text;
+  return `${all.subarray(0, NODE - 3).toString('utf8').replace(/\uFFFD+$/, '')}…`;
 }

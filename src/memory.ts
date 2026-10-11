@@ -114,6 +114,8 @@ export class Memory {
   private stopped = false;
   private readonly chat: Sawtooth;
   private readonly compaction: Sawtooth;
+  /** With lazy merges: the parents the view's next batch needs, built before it swaps them in. */
+  private planned?: Set<number>;
   /** The last store write still running, if any. Once an append fails, later writes are skipped and appends throw, as after a failed file write. */
   private writing?: Promise<void>;
   private failed?: string;
@@ -123,15 +125,17 @@ export class Memory {
   lastError?: string;
 
   /** Opens the memory in `directory` through the store `storeFor` picks, after its load. */
-  static async open(directory: string, compress: Compressor, warn: (s: string) => void = console.error, budget = VIEW, jobs = 8) {
+  static async open(directory: string, compress: Compressor, warn: (s: string) => void = console.error, budget = VIEW, jobs = 8, lazy = false) {
     const store = storeFor(directory, warn);
-    return new Memory({ directory, store, saved: await store.load() }, compress, warn, budget, jobs);
+    return new Memory({ directory, store, saved: await store.load() }, compress, warn, budget, jobs, undefined, lazy);
   }
   /** A directory alone opens a FileStore there. `jobs`: summaries built at once, and how many unbuilt lines a new message's node
-   * waits behind. Chat keeps 8; imports pass the "Import: summaries at once" setting. */
+   * waits behind. Chat keeps 8; imports pass the "Import: summaries at once" setting. `lazy`: a merge is built only once the view
+   * passes its budget and its batch needs the merge, instead of as soon as both halves are built; the view then swaps once, when
+   * every parent the batch needs is built. A short chat never pays for a merge. */
   constructor(source: string | { directory: string; store: Store; saved: Saved }, private readonly compress: Compressor,
     private readonly warn: (s: string) => void = console.error,
-    readonly budget = VIEW, private readonly jobs = 8, private readonly retryMs = 10_000) {
+    readonly budget = VIEW, private readonly jobs = 8, private readonly retryMs = 10_000, private readonly lazy = false) {
     this.chat = new Sawtooth(budget, budget / 2, part => this.node(part));
     this.compaction = new Sawtooth(budget / 4, budget / 8, part => this.node(part));
     let saved: Saved;
@@ -228,7 +232,12 @@ export class Memory {
   covering(at: number) { return this.chat.covering(at); }
   /** Returns whether the chat's view merged. */
   private fit(total = this.root.length) {
-    const merged = this.chat.fit(total);
+    let merged = false;
+    if (!this.lazy) merged = this.chat.fit(total);
+    else {
+      if (!this.planned && this.chat.size > this.budget) this.planned = this.plan(total);
+      if (this.planned && [...this.planned].every(id => this.tree.has(id))) { merged = this.chat.fit(total, true); this.planned = undefined; }
+    }
     this.compaction.fit(total, merged);
     const owed = this.owed();
     this.peak = owed > 0 ? Math.max(this.peak, owed) : 0;
@@ -266,6 +275,7 @@ export class Memory {
     }
     for (const part of this.merges.values()) {
       if (this.busy.size >= this.jobs) return;
+      if (this.lazy && !this.planned?.has(key(part))) continue;
       run(part);
     }
     // A later failure can have a later deadline than the timer installed by the first.
@@ -303,6 +313,22 @@ export class Memory {
     const boundary = part.l === 0 ? start(part) : end(part), lines: string[] = [];
     for (const p of this.compaction.parts) { if (end(p) > boundary) break; lines.push(`${start(p)}+${2 ** p.l}|${flat(this.text(p))}`); }
     return `${VIEW_OPEN}${lines.join('\n')}\n</chat>`;
+  }
+  /** The parents the view's next batch merges in, found by running its merges as if every parent were built, down to half the
+   * budget. An unbuilt line is guessed at the mean size of the merged lines built so far, else of all lines, else NODE bytes:
+   * a guess too large plans merges the swap then leaves unused. */
+  private plan(total: number) {
+    const nodes = [...this.tree.values()], merged = nodes.filter(n => n.l > 0), sample = merged.length ? merged : nodes;
+    const guess = sample.length ? sample.reduce((sum, n) => sum + n.size, 0) / sample.length : NODE;
+    const parts = [...this.chat.parts], planned = new Set<number>(), size = (p: Part) => this.node(p)?.size ?? guess;
+    let measured = parts.reduce((sum, p) => sum + size(p), 0);
+    for (let best: number; measured > this.budget / 2 && (best = mostDue(parts, total, () => true)) >= 0;) {
+      const a = parts[best], b = parts[best + 1], parent = { l: a.l + 1, i: a.i / 2 };
+      measured += size(parent) - size(a) - size(b);
+      parts.splice(best, 2, parent);
+      if (!this.node(parent)) planned.add(key(parent));
+    }
+    return planned;
   }
   private queueParent({ l, i }: Part) {
     const parent = { l: l + 1, i: Math.floor(i / 2) };

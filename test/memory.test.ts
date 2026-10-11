@@ -96,6 +96,26 @@ test('a turn waits for the view to be built, not for merges that bring it under 
   } finally { release(); await memory.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('lazy merges: none under budget, then one batch that swaps the view in once', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-test-'));
+  const merges: Part[] = [];
+  const memory = new Memory(dir, async input => { if (input.part.l) merges.push(input.part); return `${input.part.l ? 'merge' : 'leaf'} ${'x'.repeat(160)}`; },
+    () => {}, 3000, 8, 10_000, true);
+  const shrinks: number[] = [];
+  let lines = 0;
+  memory.onChange(() => { if (memory.view.length < lines) shrinks.push(memory.root.length); lines = memory.view.length; });
+  try {
+    let i = 0;
+    for (; memory.size <= memory.budget; i++) { memory.append('user', `message ${i} ${'detail '.repeat(90)}`); await memory.settle(AbortSignal.timeout(2000)); }
+    assert.equal(merges.length, 0, 'no merge while the view fits');
+    for (const deadline = Date.now() + 2000; memory.size > memory.budget && Date.now() < deadline;) await new Promise(r => setTimeout(r, 10));
+    assert.ok(memory.size <= memory.budget / 2 + 512, `the batch brought the view down to about half (${memory.size})`);
+    assert.ok(merges.length > 0);
+    assert.deepEqual(shrinks, [i], 'the view swapped once, for the whole batch');
+    for (const part of merges) assert.ok(memory.view.some(p => p.l > 0 && start(p) <= start(part) && end(part) <= end(p)), 'every merge built is under a line the view shows');
+  } finally { await memory.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('progress counts summaries against the largest backlog since it was last empty', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-test-'));
   let release = () => {};

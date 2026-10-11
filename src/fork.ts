@@ -6,8 +6,9 @@ import { compaction, IMPORT_GUIDANCE, tooLong } from './prompts.ts';
 import { record } from './cache.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 
-/** A finished turn, as a fork continues it: the last request it sent, byte for byte, its final reply's text, and its model. */
-export interface Turn { payload: Record<string, unknown>; answer: string; model: Model<Api> }
+/** A finished turn, as a fork continues it: the first and the last request it sent, byte for byte, its final reply's text,
+ * and its model. */
+export interface Turn { first: Record<string, unknown>; payload: Record<string, unknown>; answer: string; model: Model<Api> }
 
 /** The last finished turn. While a turn runs, a fork waits for it to end, so a summary starts from the turn its message was in. */
 export class Turns {
@@ -25,6 +26,8 @@ export class Turns {
     if (turn) this.last = turn;
     this.running?.end(); this.running = undefined;
   }
+  /** The last finished turn, even while another runs. */
+  get finished() { return this.last; }
   /** The last finished turn once none runs, or undefined before the first. */
   async latest(signal: AbortSignal) {
     while (this.running) {
@@ -43,6 +46,9 @@ const text = (role: 'user' | 'assistant', value: string) => ({ role, content: [{
 /**
  * A compressor that writes each line as a fork of the last finished turn: the turn's model is sent the turn's last request
  * unchanged, then its reply and the compaction task, so everything up to the task is read from the cache the turn wrote.
+ * A message's line waits while a turn runs, since the message may be in it. A merge needs only the view, so it forks the
+ * last finished turn's first request at once, which is the system prompt, the view and one message: a shorter prefix to
+ * reread than the whole turn's, and also in the cache.
  * The task runs at `effort`, set by a system message after it: Anthropic keeps the cached prefix through a per-message
  * effort change, where a changed top-level effort would start the cache over. Before any turn has finished there is
  * nothing to fork, and `fallback` writes the line. A line over `accepted` bytes is asked for again in the same
@@ -51,14 +57,18 @@ const text = (role: 'user' | 'assistant', value: string) => ({ role, content: [{
 export function createForkCompressor(registry: ModelRegistry, turns: Turns, effort: () => ThinkingLevel, fallback: Compressor,
   onUsage: (message: AssistantMessage) => void = () => {}, accepted = () => DEFAULT_SETTINGS.summaryAcceptBytes): Compressor {
   return async (input, signal) => {
-    const turn = await turns.latest(signal);
-    if (!turn || !Array.isArray(turn.payload.messages)) return fallback(input, signal);
+    const merge = input.part.l > 0, turn = merge ? turns.finished : await turns.latest(signal);
+    if (!turn) return fallback(input, signal);
+    const base = merge ? turn.first : turn.payload;
+    if (!Array.isArray(base.messages)) return fallback(input, signal);
     const task = `${input.historical ? IMPORT_GUIDANCE + '\n\n' : ''}${compaction(input)}`;
-    const messages: unknown[] = [...turn.payload.messages, text('assistant', turn.answer || '(the turn ended without a reply)'), text('user', task),
-      { role: 'system', content: [], output_config: { effort: effortOf(effort()) } }];
+    // The first request ends on the turn's opening message, and a merge's task follows it as the next user message.
+    const reply = merge ? [] : [text('assistant', turn.answer || '(the turn ended without a reply)')];
+    const messages: unknown[] = [...base.messages, ...reply, text(merge ? 'assistant' : 'user', merge ? '(this turn is set aside for a compaction)' : task),
+      ...(merge ? [text('user', task)] : []), { role: 'system', content: [], output_config: { effort: effortOf(effort()) } }];
     const tries: string[] = [];
     for (let attempt = 0; attempt < 5; attempt++) {
-      const payload = { ...turn.payload, messages: [...messages] };
+      const payload = { ...base, messages: [...messages] };
       const reply: AssistantMessage = await registry.streamSimple(turn.model, { messages: [] }, { signal, onPayload: () => payload }).result();
       onUsage(reply);
       if (reply.stopReason === 'error' || reply.stopReason === 'aborted') throw new Error(reply.errorMessage ?? `Fork ${reply.stopReason}`);

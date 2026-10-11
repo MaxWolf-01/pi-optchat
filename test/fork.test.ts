@@ -20,8 +20,9 @@ function registry(lines: string[]) {
   };
   return { sent, registry: fake as unknown as ModelRegistry };
 }
+const first = { model: 'claude-opus-5-5', system: [{ type: 'text', text: 'system' }], messages: [{ role: 'user', content: [{ type: 'text', text: '<chat>\n0+1|user: hi\n</chat>' }] }, { role: 'system', content: [], output_config: { effort: 'medium' } }] };
 const turn = {
-  model,
+  model, first,
   payload: { model: 'claude-opus-5-5', system: [{ type: 'text', text: 'system' }], tools: [], thinking: { type: 'adaptive' }, output_config: { effort: 'high' },
     messages: [{ role: 'user', content: [{ type: 'text', text: '<chat>\n0+1|user: hi\n</chat>' }] }, { role: 'system', content: [], output_config: { effort: 'medium' } }] },
   answer: 'the reply',
@@ -63,4 +64,15 @@ test('a fork waits while a turn runs and forks the turn that ended; before any t
   turns.finish({ ...turn, answer: 'the newer reply' });
   assert.equal(await pending, 'line');
   assert.equal((sent[0].messages as { content: { text?: string }[] }[])[2].content[0].text, 'the newer reply');
+});
+
+test('a merge forks the last finished turn\'s first request at once, even while a turn runs', async () => {
+  const { sent, registry: models } = registry(['merged line']);
+  const turns = new Turns(); turns.finish(turn); turns.start();
+  const merge: Compression = { context: 'unused', source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } };
+  assert.equal(await createForkCompressor(models, turns, () => 'low', noFallback)(merge, AbortSignal.timeout(1000)), 'merged line');
+  const messages = sent[0].messages as { role: string; content: { text?: string }[]; output_config?: unknown }[];
+  assert.deepEqual(messages.slice(0, 2), first.messages, 'the first request is the prefix');
+  assert.deepEqual(messages.slice(2).map(m => m.role), ['assistant', 'user', 'system']);
+  assert.match(messages[3].content[0].text!, /^Compaction: merge lines 0\+1 and 1\+1/);
 });

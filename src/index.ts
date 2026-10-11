@@ -67,9 +67,9 @@ export default function optchat(pi: ExtensionAPI) {
   let closeWindows: (() => Promise<void>) | undefined;
   let recovery: Promise<void> | undefined;
   let run: AgentMessage[] = [];
-  /** Finished turns, for summaries written as forks of them, and the last request the running turn sent. */
+  /** Finished turns, for summaries written as forks of them, and the first and last request the running turn sent. */
   const turns = new Turns();
-  let sent: { payload: Record<string, unknown>; model: Model<Api> } | undefined;
+  let sent: { first: Record<string, unknown>; payload: Record<string, unknown>; model: Model<Api> } | undefined;
   let previous: AgentMessage[] = [];
   let logged = 0;
   let view: string | undefined;
@@ -412,7 +412,7 @@ export default function optchat(pi: ExtensionAPI) {
     // The turn's last request, which its summaries resend as their prefix.
     if (active?.config.forkSummaries && ctx.model?.api === 'anthropic-messages') {
       const copy = snapshot(payload);
-      sent = copy && { payload: copy, model: ctx.model };
+      sent = copy && { first: sent?.first ?? copy, payload: copy, model: ctx.model };
     }
     return payload;
   });

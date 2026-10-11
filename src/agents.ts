@@ -40,6 +40,7 @@ const STOPPED: Record<StopCause, string> = {
   parent: 'Stopped because the agent that started it stopped or ended. Its chat is kept, so tell resumes it where it stopped.',
   pi: 'Stopped because Pi closed or reloaded while it waited for the user. It is not resumed on its own; its chat is kept, so tell resumes it where it stopped.',
 };
+const stoppedReport = (cause: StopCause, text = '') => `${STOPPED[cause]}${text ? `\n\nIts last message before the stop:\n${text}` : ''}`;
 interface Options { parentSession?: string; usage?: UsageLedger; createSession?: typeof createAgentSession;
   /** Names of the built-in extensions the main session loaded (see `loadedBuiltins`). */
   builtins?: () => Iterable<string>;
@@ -366,11 +367,11 @@ export class Children {
       transition(info, info.state === 'stopping' || last?.role === 'assistant' && last.stopReason === 'aborted' ? 'stopped'
         : last?.role === 'assistant' && last.stopReason === 'error' ? 'failed' : 'completed');
       const text = session.getLastAssistantText();
-      info.report = info.state === 'stopped' && live.stoppedBy ? `${STOPPED[live.stoppedBy]}${text ? `\n\nIts last message before the stop:\n${text}` : ''}`
+      info.report = info.state === 'stopped' && live.stoppedBy ? stoppedReport(live.stoppedBy, text)
         : last?.role === 'assistant' && (last.stopReason === 'error' || last.stopReason === 'aborted') ? `Task ${last.stopReason}: ${last.errorMessage ?? 'No details'}` : text || 'Finished without a text report.';
     } catch (error) {
       transition(info, info.state === 'stopping' ? 'stopped' : 'failed');
-      info.report = info.state === 'stopped' && live.stoppedBy ? STOPPED[live.stoppedBy] : `${info.state}: ${String(error)}`;
+      info.report = info.state === 'stopped' && live.stoppedBy ? stoppedReport(live.stoppedBy, session.getLastAssistantText()) : `${info.state}: ${String(error)}`;
     } finally {
       const children = this.directChildren(info.id);
       await Promise.allSettled(children.map(child => this.stop(child.info.id, 'parent')));

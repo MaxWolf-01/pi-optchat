@@ -633,6 +633,25 @@ test('a child still at work when its parent\'s run throws is stopped, and its re
   } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a run stopped while its next request throws still reports its last message under the stop text', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-stop-throw-'));
+  const reports: string[] = [];
+  const { children, asked } = await busyChildren(dir, reports);
+  try {
+    const [id] = await children.spawn([{ task: 'busy' }], dir);
+    await until(() => asked.length === 1);
+    const session = children.live(id)!.session;
+    let before: string | undefined;
+    session.prompt = async () => { before = session.getLastAssistantText(); await children.stop(id); throw new Error('boom'); };
+    await children.tell(id, 'Go on.', 'user');
+    assert.equal(await children.interrupt(id), 'continued');
+    await until(() => !children.active);
+    assert.equal(children.history.records.get(id)?.state, 'stopped');
+    assert.ok(before);
+    assert.equal(reports.at(-1), `[${id}] Stopped by the user. They ended it on purpose, so it did not fail: do not redo or delegate this task again unless they ask. Its chat is kept, so tell resumes it where it stopped.\n\nIts last message before the stop:\n${before}`);
+  } finally { await children.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the user can take their newest queued message back; the rest stays queued in order', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-withdraw-'));
   const { children, asked } = await busyChildren(dir, []);

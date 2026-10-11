@@ -2,15 +2,16 @@ import { execFile } from 'node:child_process';
 import { existsSync, readFileSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostname } from 'node:os';
-import { getSupportedThinkingLevels } from '@earendil-works/pi-ai';
+import { getSupportedThinkingLevels, type Api, type AssistantMessage, type Model } from '@earendil-works/pi-ai';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { parseSkillBlock, type ExtensionAPI, type ExtensionContext, type ExtensionCommandContext } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { Memory } from './memory.ts';
 import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor } from './compactor.ts';
+import { createForkCompressor, snapshot, Turns } from './fork.ts';
 import { createProfile, holdProfile, instructions, isWindows, lastProfile, listProfiles, loadConfig, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
-import { allowSearch, CONTINUITY, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, VIEW_DOC } from './prompts.ts';
+import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
@@ -66,6 +67,9 @@ export default function optchat(pi: ExtensionAPI) {
   let closeWindows: (() => Promise<void>) | undefined;
   let recovery: Promise<void> | undefined;
   let run: AgentMessage[] = [];
+  /** Finished turns, for summaries written as forks of them, and the last request the running turn sent. */
+  const turns = new Turns();
+  let sent: { payload: Record<string, unknown>; model: Model<Api> } | undefined;
   let previous: AgentMessage[] = [];
   let logged = 0;
   let view: string | undefined;
@@ -160,6 +164,7 @@ export default function optchat(pi: ExtensionAPI) {
     stopping = true; importController?.abort(); await importTask?.catch(() => {});
     if (!active) return;
     const old = active;
+    turns.finish();
     try {
       await closeWindows?.(); closeWindows = undefined;
       await recovery;
@@ -197,10 +202,11 @@ export default function optchat(pi: ExtensionAPI) {
       const pending = join(dir, 'pending-reports.json');
       const saved: unknown = existsSync(pending) ? JSON.parse(readFileSync(pending, 'utf8')) : [];
       if (!Array.isArray(saved) || !saved.every(isPendingReport)) throw new Error('Invalid pending report journal.');
-      const memory = await Memory.open(memoryDirectory(dir), createCompressor(ctx.modelRegistry, () => config.compactor, message => {
-        usage.compression(message, 'compactor', sessionId);
-        status(ctx);
-      }, () => config.summaryAcceptBytes), warning => ctx.ui.notify(warning, 'error'));
+      const summarized = (message: AssistantMessage) => { usage.compression(message, 'compactor', sessionId); status(ctx); };
+      const compactor = createCompressor(ctx.modelRegistry, () => config.compactor, summarized, () => config.summaryAcceptBytes);
+      const memory = await Memory.open(memoryDirectory(dir), config.forkSummaries
+        ? createForkCompressor(ctx.modelRegistry, turns, () => config.compactor.thinking, compactor, summarized, () => config.summaryAcceptBytes) : compactor,
+      warning => ctx.ui.notify(warning, 'error'), undefined, undefined, config.lazyMerges);
       openingMemory = memory;
       const inbox = new Inbox(dir);
       const recovered = pendingImport(dir) ? 0 : inbox.recover(memory);
@@ -328,7 +334,7 @@ export default function optchat(pi: ExtensionAPI) {
     const a = required();
     // Pi's own prompt sections (AGENTS.md files, skills, cwd) stay; the profile's instructions go last.
     syncSearch(a.config);
-    event.systemPromptOptions.customPrompt = allowSearch(`${MASTER}\n\n${VIEW_DOC}${a.config.previousExchange ? CONTINUITY : ''}${a.config.memorySearch ? SEARCH_DOC : ''}`, a.config.memorySearch);
+    event.systemPromptOptions.customPrompt = allowSearch(`${MASTER}\n\n${VIEW_DOC}${a.config.previousExchange ? CONTINUITY : ''}${a.config.memorySearch ? SEARCH_DOC : ''}${a.config.forkSummaries ? FORK_DOC : ''}`, a.config.memorySearch);
     event.systemPromptOptions.sections.instructions = `${instructions(a.dir)}\n\n${IMPORT_GUIDANCE}`;
     prompt = event.systemPrompt;
   });
@@ -388,6 +394,7 @@ export default function optchat(pi: ExtensionAPI) {
         const unsubscribe = a.memory.onChange(show);
         try { await a.memory.settle(ctx.signal); } finally { unsubscribe(); ctx.ui.setWorkingMessage(); }
         view = a.memory.render(); // Capture old history before logging the new input.
+        turns.start(); // Summaries of this turn's messages fork it once it ends.
         flush();
       }
       // Built on every call, unlike the view, so it is never out of date; it goes last, after everything cached.
@@ -400,7 +407,15 @@ export default function optchat(pi: ExtensionAPI) {
       return { messages: [{ role: 'system', content: 'OptChat context unavailable. Stop.', timestamp: 0 }] };
     }
   });
-  pi.on('before_provider_request', (event, ctx) => ctx.model?.api === 'anthropic-messages' ? cachePayload(event.payload) : event.payload);
+  pi.on('before_provider_request', (event, ctx) => {
+    const payload = ctx.model?.api === 'anthropic-messages' ? cachePayload(event.payload) : event.payload;
+    // The turn's last request, which its summaries resend as their prefix.
+    if (active?.config.forkSummaries && ctx.model?.api === 'anthropic-messages') {
+      const copy = snapshot(payload);
+      sent = copy && { payload: copy, model: ctx.model };
+    }
+    return payload;
+  });
   pi.on('cache_warming_decision', () => ({ action: 'stop' }));
   pi.on('session_before_compact', (_event, ctx) => {
     ctx.ui.notify('OptChat manages history between turns. Pi compaction is disabled; an exceptionally long single run may require stopping and continuing in a new turn.', 'info');
@@ -413,6 +428,9 @@ export default function optchat(pi: ExtensionAPI) {
   pi.on('turn_end', (_event, ctx) => collectUsage(ctx));
   pi.on('agent_settled', async (_event, ctx) => {
     collectUsage(ctx);
+    const reply = run.findLast(m => m.role === 'assistant');
+    turns.finish(sent && { ...sent, answer: reply?.role === 'assistant' ? reply.content.flatMap(b => b.type === 'text' ? [b.text] : []).join('\n') : '' });
+    sent = undefined;
     try { flush(); active?.inbox.dropReturned(); } catch (error) { fault = errorText(error); ctx.ui.notify(fault, 'error'); }
     // A report steered into this run that never reached it (Esc or a dequeue cleared Pi's queue) is sent again, now as its own turn.
     if (active && !fault && !stopping) for (const r of reports) if (r.steered && !r.batch) sendReport(r);

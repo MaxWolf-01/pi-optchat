@@ -130,6 +130,14 @@ tell_parent. Before you wait on something slow, such as CI, say so the same
 way ("pushed, now watching CI until it passes"), so OptChat can go on
 without you, then watch it.`;
 
+// Added after the view doc when Fork summaries is on: the compactions section of COMPACT, so a fork of a turn,
+// which keeps the turn's system prompt to read it from the cache, knows its task. One prompt for turns and compactions, as in the recipe.
+export const FORK_DOC = `
+
+A call can also end, after your last turn and its reply, on a task starting "Compaction:" instead of a message from the user.
+
+${COMPACT.slice(COMPACT.indexOf('# Compactions'))}`;
+
 // Added after the view doc when Previous exchange is on.
 export const CONTINUITY = `
 

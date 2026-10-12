@@ -92,8 +92,7 @@ export function createForkCompressor(registry: ModelRegistry, turns: Turns, effo
     messages.push({ role: 'system', content: [], output_config: settings });
     const tries: string[] = [];
     for (let attempt = 0; attempt < 5; attempt++) {
-      // cachePayload splits the view into marked blocks in place, so each attempt marks a copy.
-      const payload = merge ? cachePayload(structuredClone({ ...base, messages })) : { ...base, messages: [...messages] };
+      const payload = request(base, messages, merge, turn.payload.messages.length);
       const warmed = prefix ? await gate(prefix, signal) : () => {};
       let reply: AssistantMessage;
       try { reply = await registry.streamSimple(turn.model, { messages: [] }, { signal, onPayload: () => payload }).result(); }
@@ -114,6 +113,25 @@ export function createForkCompressor(registry: ModelRegistry, turns: Turns, effo
     if (!tries.length) throw new Error('Fork returned no whole line in 5 tries.');
     return tries.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
   };
+}
+
+/**
+ * The request a fork sends, with its cache marks where they read what is cached and write nothing new: the task is asked
+ * once, so caching it would only pay the write. A merge's marks sit on the compactions' view. A message's line marks the
+ * last block of the turn's own request (its first `held` messages), where the turn's request was cached, in place of the
+ * mark at the request's end.
+ */
+function request(base: Record<string, unknown>, messages: unknown[], merge: boolean, held: number) {
+  // cachePayload splits the view into marked blocks in place, so each attempt marks a copy.
+  const payload = structuredClone({ ...base, messages }) as Record<string, unknown> & { messages: unknown[] };
+  if (merge) cachePayload(payload);
+  else {
+    const last = payload.messages.slice(0, held).findLast(m => record(m) && m.role !== 'system' && Array.isArray(m.content) && m.content.length);
+    const block = record(last) && Array.isArray(last.content) ? last.content.at(-1) : undefined;
+    if (record(block)) block.cache_control = { type: 'ephemeral' };
+  }
+  delete payload.cache_control;
+  return payload;
 }
 
 /** Whether `messages` hold the message `source` (its `kind: ` and a tool's `name: ` prefix aside), found by its last characters. */

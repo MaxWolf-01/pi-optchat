@@ -37,7 +37,9 @@ test('a fork resends the turn\'s request unchanged, then its reply, the task, an
   assert.equal(line, 'a short line');
   const [payload] = sent, messages = payload.messages as { role: string; content: { text?: string }[]; output_config?: unknown }[];
   for (const key of ['model', 'system', 'tools', 'thinking', 'output_config']) assert.deepEqual(payload[key], turn.payload[key as keyof typeof turn.payload], key);
-  assert.deepEqual(messages.slice(0, 2), turn.payload.messages, 'the turn\'s messages are the prefix, byte for byte');
+  // Byte for byte but for the cache mark on the turn's last block, which marks where the turn was cached.
+  const unmarked = JSON.parse(JSON.stringify(messages.slice(0, 2), (k, v) => k === 'cache_control' ? undefined : v));
+  assert.deepEqual(unmarked, turn.payload.messages, 'the turn\'s messages are the prefix');
   assert.deepEqual(messages.slice(2).map(m => m.role), ['assistant', 'user', 'system']);
   assert.equal(messages[2].content[0].text, 'the reply');
   assert.match(messages[3].content[0].text!, /^Compaction: compress message 3/);
@@ -116,4 +118,18 @@ test('a merge before any turn waits for the first one instead of going to the fa
   assert.equal(sent.length, 0);
   turns.finish(turn);
   assert.equal(await pending, 'merged line');
+});
+
+test('a fork writes nothing new to the cache: its marks sit where the turn or the compactions\' view was cached, not on the task', async () => {
+  const { sent, registry: models } = registry(['line', 'line']);
+  const turns = new Turns(); turns.finish({ ...turn, payload: { ...turn.payload, cache_control: { type: 'ephemeral' } } });
+  const compress = createForkCompressor(models, turns, () => 'low', noFallback);
+  await compress(input, AbortSignal.timeout(1000));
+  await compress({ context: `<chat>\n${Array.from({ length: 9 }, (_, i) => `${i}+1|line ${i}`).join('\n')}\n</chat>`, source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } }, AbortSignal.timeout(1000));
+  for (const payload of sent) assert.equal(payload.cache_control, undefined, 'no mark at the end of the request');
+  const leaf = sent[0].messages as { content: { cache_control?: unknown }[] }[];
+  assert.ok(leaf[0].content.at(-1)!.cache_control, 'the turn\'s last message carries the mark');
+  assert.ok(!leaf.slice(1).some(m => m.content.some(b => b.cache_control)), 'nothing after it does');
+  const merge = sent[1].messages as { content: { text?: string; cache_control?: unknown }[] }[];
+  assert.ok(!merge[0].content.at(-1)!.cache_control, 'the task is not marked');
 });

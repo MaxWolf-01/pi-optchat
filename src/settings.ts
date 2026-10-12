@@ -21,7 +21,7 @@ export const SETTINGS = {
     description: 'Give agents a search tool that finds original messages by plain text, newest first, for exact names, numbers, paths or errors the view doesn\'t show. Off: zoom and date only, as in Victor\'s recipe. Turning it on or off makes the next turn re-cache its prompt once.',
     applies: 'Applies from the next turn, and to subagents started or resumed after this.' },
   summaryAcceptBytes: { kind: 'number', label: 'Summary size tolerance', default: NODE * 1.25, min: NODE, unit: 'bytes',
-    description: `The compactor is always asked for ${NODE}-byte lines; a longer line up to this size is kept instead of retried. ${NODE}: strict, as in Victor's recipe. The default saves retries for a little more view space.`,
+    description: `The compactor is always asked for ${NODE}-byte lines; a longer line up to this size is kept instead of retried, and a message up to this size is its own line, word for word, with no summary call. ${NODE}: strict, as in Victor's recipe. The default saves calls and retries for a little more view space.`,
     applies: 'Applies to the next summary.' },
   forkSummaries: { kind: 'toggle', label: 'Fork summaries', default: false,
     description: 'On: each summary is a fork of the last finished turn, written by the main agent\'s model with the turn\'s whole context read from its cache, at the compactor\'s effort; the compactor model writes only the summaries due before the first turn. Off: the compactor model writes them from its own smaller view, as in Victor\'s recipe.',

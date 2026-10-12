@@ -118,6 +118,19 @@ test('lazy merges: the chat view swaps in a batch only once it passes its budget
   } finally { await memory.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('a message up to the keep size is its own line, word for word; a longer one goes to the compactor', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'optchat-test-'));
+  const sources: string[] = [];
+  const memory = new Memory(dir, async input => { sources.push(input.source); return 'summary'; }, () => {}, 128000, 8, 10_000, false, 640);
+  try {
+    memory.append('talk', 'f'.repeat(600)); memory.append('talk', 'g'.repeat(700));
+    await memory.settle(AbortSignal.timeout(2000));
+    assert.equal(memory.node({ l: 0, i: 0 })?.text, `talk: ${'f'.repeat(600)}`);
+    assert.equal(memory.node({ l: 0, i: 1 })?.text, 'summary');
+    assert.equal(sources.filter(s => s.startsWith('talk')).length, 1);
+  } finally { await memory.close(); rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('progress counts summaries against the largest backlog since it was last empty', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-test-'));
   let release = () => {};

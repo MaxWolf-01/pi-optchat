@@ -125,17 +125,18 @@ export class Memory {
   lastError?: string;
 
   /** Opens the memory in `directory` through the store `storeFor` picks, after its load. */
-  static async open(directory: string, compress: Compressor, warn: (s: string) => void = console.error, budget = VIEW, jobs = 8, lazy = false) {
+  static async open(directory: string, compress: Compressor, warn: (s: string) => void = console.error, budget = VIEW, jobs = 8, lazy = false, keep = NODE) {
     const store = storeFor(directory, warn);
-    return new Memory({ directory, store, saved: await store.load() }, compress, warn, budget, jobs, undefined, lazy);
+    return new Memory({ directory, store, saved: await store.load() }, compress, warn, budget, jobs, undefined, lazy, keep);
   }
   /** A directory alone opens a FileStore there. `jobs`: summaries built at once, and how many unbuilt lines a new message's node
    * waits behind. Chat keeps 8; imports pass the "Import: summaries at once" setting. `lazy`: a merge is built only once the view
    * passes its budget and its batch needs the merge, instead of as soon as both halves are built; the view then swaps once, when
-   * every parent the batch needs is built. A short chat never pays for a merge. */
+   * every parent the batch needs is built. A short chat never pays for a merge. `keep`: a message, or two lines to merge, of at
+   * most this many bytes is its own line, word for word, with no summary call. */
   constructor(source: string | { directory: string; store: Store; saved: Saved }, private readonly compress: Compressor,
     private readonly warn: (s: string) => void = console.error,
-    readonly budget = VIEW, private readonly jobs = 8, private readonly retryMs = 10_000, private readonly lazy = false) {
+    readonly budget = VIEW, private readonly jobs = 8, private readonly retryMs = 10_000, private readonly lazy = false, private readonly keep = NODE) {
     this.chat = new Sawtooth(budget, budget / 2, part => this.node(part));
     this.compaction = new Sawtooth(budget / 4, budget / 8, part => this.node(part));
     let saved: Saved;
@@ -286,7 +287,7 @@ export class Memory {
     const source = part.l === 0 ? `${this.root[part.i].kind}: ${this.root[part.i].text}`
       : [0, 1].map(offset => this.text({ l: part.l - 1, i: 2 * part.i + offset })).join('\n');
     const mergeSource = part.l > 0 ? [0, 1].map(offset => flat(this.text({ l: part.l - 1, i: 2 * part.i + offset }))).join('\n') : source;
-    const text = bytes(source) <= NODE ? source : (await this.compress({ context: this.compactionView(part), source: mergeSource, part,
+    const text = bytes(source) <= this.keep ? source : (await this.compress({ context: this.compactionView(part), source: mergeSource, part,
       historical: this.root.slice(start(part), end(part)).some(entry => !!entry.origin) }, this.controller.signal).catch(error => {
       // A safety refusal repeats on every retry, and every later summary waits on this one: stand in with the source's head.
       if (!REFUSED.test(error instanceof Error ? error.message : String(error))) throw error;

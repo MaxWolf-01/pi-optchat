@@ -206,7 +206,7 @@ export default function optchat(pi: ExtensionAPI) {
       const compactor = createCompressor(ctx.modelRegistry, () => config.compactor, summarized, () => config.summaryAcceptBytes);
       const memory = await Memory.open(memoryDirectory(dir), config.forkSummaries
         ? createForkCompressor(ctx.modelRegistry, turns, () => config.compactor.thinking, compactor, summarized, () => config.summaryAcceptBytes, () => config.mergeGist) : compactor,
-      warning => ctx.ui.notify(warning, 'error'), undefined, undefined, config.lazyMerges);
+      warning => ctx.ui.notify(warning, 'error'), undefined, undefined, config.lazyMerges, config.summaryAcceptBytes);
       openingMemory = memory;
       const inbox = new Inbox(dir);
       const recovered = pendingImport(dir) ? 0 : inbox.recover(memory);

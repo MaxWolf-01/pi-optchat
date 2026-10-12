@@ -51,7 +51,7 @@ class Sawtooth {
   readonly parts: Part[] = [];
   private measured = 0;
   private merging = false;
-  constructor(private readonly high: number, private readonly low: number, private readonly node: (part: Part) => Summary | undefined) {}
+  constructor(readonly high: number, readonly low: number, private readonly node: (part: Part) => Summary | undefined) {}
   private lineSize(part: Part) { return this.node(part)?.size ?? UNBUILT_BYTES; }
   get size() { return this.measured; }
   push(part: Part) { this.parts.push(part); this.measured += this.lineSize(part); }
@@ -114,8 +114,8 @@ export class Memory {
   private stopped = false;
   private readonly chat: Sawtooth;
   private readonly compaction: Sawtooth;
-  /** With lazy merges: the parents the view's next batch needs, built before it swaps them in. */
-  private planned?: Set<number>;
+  /** With lazy merges: for each view, the parents its next batch needs, built before it swaps them in. */
+  private readonly plans = new Map<Sawtooth, Set<number>>();
   /** The last store write still running, if any. Once an append fails, later writes are skipped and appends throw, as after a failed file write. */
   private writing?: Promise<void>;
   private failed?: string;
@@ -232,13 +232,10 @@ export class Memory {
   covering(at: number) { return this.chat.covering(at); }
   /** Returns whether the chat's view merged. */
   private fit(total = this.root.length) {
-    let merged = false;
-    if (!this.lazy) merged = this.chat.fit(total);
-    else {
-      if (!this.planned && this.chat.size > this.budget) this.planned = this.plan(total);
-      if (this.planned && [...this.planned].every(id => this.tree.has(id))) { merged = this.chat.fit(total, true); this.planned = undefined; }
-    }
-    this.compaction.fit(total, merged);
+    let merged: boolean;
+    if (!this.lazy) { merged = this.chat.fit(total); this.compaction.fit(total, merged); }
+    // The compactions' view runs its own batches: it passes its budget sooner and so plans merges the chat's view doesn't need yet.
+    else { merged = this.batch(this.chat, total); this.batch(this.compaction, total); }
     const owed = this.owed();
     this.peak = owed > 0 ? Math.max(this.peak, owed) : 0;
     this.events.emit('change');
@@ -275,7 +272,7 @@ export class Memory {
     }
     for (const part of this.merges.values()) {
       if (this.busy.size >= this.jobs) return;
-      if (this.lazy && !this.planned?.has(key(part))) continue;
+      if (this.lazy && ![...this.plans.values()].some(plan => plan.has(key(part)))) continue;
       run(part);
     }
     // A later failure can have a later deadline than the timer installed by the first.
@@ -314,15 +311,24 @@ export class Memory {
     for (const p of this.compaction.parts) { if (end(p) > boundary) break; lines.push(`${start(p)}+${2 ** p.l}|${flat(this.text(p))}`); }
     return `${VIEW_OPEN}${lines.join('\n')}\n</chat>`;
   }
-  /** The parents the view's next batch merges in, found by running its merges as if every parent were built, down to half the
-   * budget. An unbuilt line is guessed at the mean size of the merged lines built so far, else of all lines, else NODE bytes:
+  /** With lazy merges, one view's batch: planned once the view passes its high mark, swapped in once every planned parent is
+   * built. Returns whether the view merged. */
+  private batch(view: Sawtooth, total: number) {
+    let plan = this.plans.get(view);
+    if (!plan && view.size > view.high) this.plans.set(view, plan = this.plan(view, total));
+    if (!plan || ![...plan].every(id => this.tree.has(id))) return false;
+    this.plans.delete(view);
+    return view.fit(total, true);
+  }
+  /** The parents a view's next batch merges in, found by running its merges as if every parent were built, down to its low
+   * mark. An unbuilt line is guessed at the mean size of the merged lines built so far, else of all lines, else NODE bytes:
    * a guess too large plans merges the swap then leaves unused. */
-  private plan(total: number) {
+  private plan(view: Sawtooth, total: number) {
     const nodes = [...this.tree.values()], merged = nodes.filter(n => n.l > 0), sample = merged.length ? merged : nodes;
     const guess = sample.length ? sample.reduce((sum, n) => sum + n.size, 0) / sample.length : NODE;
-    const parts = [...this.chat.parts], planned = new Set<number>(), size = (p: Part) => this.node(p)?.size ?? guess;
+    const parts = [...view.parts], planned = new Set<number>(), size = (p: Part) => this.node(p)?.size ?? guess;
     let measured = parts.reduce((sum, p) => sum + size(p), 0);
-    for (let best: number; measured > this.budget / 2 && (best = mostDue(parts, total, () => true)) >= 0;) {
+    for (let best: number; measured > view.low && (best = mostDue(parts, total, () => true)) >= 0;) {
       const a = parts[best], b = parts[best + 1], parent = { l: a.l + 1, i: a.i / 2 };
       measured += size(parent) - size(a) - size(b);
       parts.splice(best, 2, parent);

@@ -96,23 +96,25 @@ test('a turn waits for the view to be built, not for merges that bring it under 
   } finally { release(); await memory.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('lazy merges: none under budget, then one batch that swaps the view in once', async () => {
+test('lazy merges: the chat view swaps in a batch only once it passes its budget, and the tree stays smaller than an eager one', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'optchat-test-'));
   const merges: Part[] = [];
   const memory = new Memory(dir, async input => { if (input.part.l) merges.push(input.part); return `${input.part.l ? 'merge' : 'leaf'} ${'x'.repeat(160)}`; },
     () => {}, 3000, 8, 10_000, true);
-  const shrinks: number[] = [];
-  let lines = 0;
-  memory.onChange(() => { if (memory.view.length < lines) shrinks.push(memory.root.length); lines = memory.view.length; });
+  // The size the chat view had before each time it lost lines.
+  const swappedFrom: number[] = [];
+  let lines = 0, size = 0;
+  memory.onChange(() => { if (memory.view.length < lines) swappedFrom.push(size); lines = memory.view.length; size = memory.size; });
   try {
-    let i = 0;
-    for (; memory.size <= memory.budget; i++) { memory.append('user', `message ${i} ${'detail '.repeat(90)}`); await memory.settle(AbortSignal.timeout(2000)); }
-    assert.equal(merges.length, 0, 'no merge while the view fits');
+    for (let i = 0; i < 60; i++) { memory.append('user', `message ${i} ${'detail '.repeat(90)}`); await memory.settle(AbortSignal.timeout(2000)); }
     for (const deadline = Date.now() + 2000; memory.size > memory.budget && Date.now() < deadline;) await new Promise(r => setTimeout(r, 10));
-    assert.ok(memory.size <= memory.budget / 2 + 512, `the batch brought the view down to about half (${memory.size})`);
-    assert.ok(merges.length > 0);
-    assert.deepEqual(shrinks, [i], 'the view swapped once, for the whole batch');
-    for (const part of merges) assert.ok(memory.view.some(p => p.l > 0 && start(p) <= start(part) && end(part) <= end(p)), 'every merge built is under a line the view shows');
+    assert.ok(swappedFrom.length >= 2, `the chat view went through several batches (${swappedFrom.length})`);
+    // The size seen last is from before the message whose line took the view over, one line of at most ~600 bytes back.
+    for (const from of swappedFrom) assert.ok(from + 600 > memory.budget, `a swap from ${from} bytes, only near the budget`);
+    assert.ok(memory.size <= memory.budget);
+    // The compactions' view batches at a quarter of the budget, so merges run before the chat view's batches need them, but an
+    // eager tree would hold a merge for every pair by now.
+    assert.ok(merges.length < memory.root.length - 1, `${merges.length} merges, fewer than the ${memory.root.length - 1} of an eager tree`);
   } finally { await memory.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 

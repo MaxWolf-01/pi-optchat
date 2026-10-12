@@ -2,8 +2,9 @@ import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import type { ModelRegistry } from '@earendil-works/pi-coding-agent';
 import { bytes, NODE, type Compressor } from './memory.ts';
-import { compaction, IMPORT_GUIDANCE, tooLong } from './prompts.ts';
-import { record } from './cache.ts';
+import { compaction, IMPORT_GUIDANCE, pointedCompaction, tooLong } from './prompts.ts';
+import { cachePayload, record, splitView } from './cache.ts';
+import { primeFirst } from './compactor.ts';
 import { DEFAULT_SETTINGS } from './settings.ts';
 
 /** A finished turn, as a fork continues it: the first and the last request it sent, byte for byte, its final reply's text,
@@ -52,33 +53,52 @@ const effortOf = (level: ThinkingLevel) => level === 'off' || level === 'minimal
 const text = (role: 'user' | 'assistant', value: string) => ({ role, content: [{ type: 'text', text: value }] });
 
 /**
- * A compressor that writes each line as a fork of the last finished turn: the turn's model is sent the turn's last request
- * unchanged, then its reply and the compaction task, so everything up to the task is read from the cache the turn wrote.
- * A message's line waits while a turn runs, since the message may be in it. A merge needs only the view, so it forks the
- * last finished turn's first request at once, which is the system prompt, the view and one message: a shorter prefix to
- * reread than the whole turn's, and also in the cache.
+ * A compressor that writes a line with the main agent's model, from the cache its turns wrote.
+ *
+ * A message's line forks the last finished turn: the turn's last request unchanged, then its reply and the task, so all of
+ * it is read from the cache. It waits while a turn runs, since the message may be in it. The message is almost always in
+ * the forked request already, so the task names it by its start and end instead of repeating it, which would be paid again
+ * as a cache write; a message the request does not hold is quoted whole.
+ *
+ * A merge needs nearby context, not the whole chat at full detail, so it is sent the compactions' own view (`input.context`,
+ * the chat merged further, 16-32 KB) after the turns' tools and system prompt, as the recipe's compactions are. Parallel
+ * merges share that view, so the first primes the cache and the rest read it. Nothing waits on a merge, so before the first
+ * turn it waits for one; a message's line then goes to `fallback`, since the turn waits on it.
+ *
  * The task runs at `effort`, set by a system message after it: Anthropic keeps the cached prefix through a per-message
- * effort change, where a changed top-level effort would start the cache over. Before any turn has finished there is
- * nothing to fork, and `fallback` writes the line. A line over `accepted` bytes is asked for again in the same
- * conversation, as the compactor does.
+ * effort change, where a changed top-level effort would start the cache over. With `gist`, a merge of 8 messages or more
+ * opens with their gist. A line over `accepted` bytes is asked for again in the same conversation, as the compactor does.
  */
 export function createForkCompressor(registry: ModelRegistry, turns: Turns, effort: () => ThinkingLevel, fallback: Compressor,
-  onUsage: (message: AssistantMessage) => void = () => {}, accepted = () => DEFAULT_SETTINGS.summaryAcceptBytes): Compressor {
+  onUsage: (message: AssistantMessage) => void = () => {}, accepted = () => DEFAULT_SETTINGS.summaryAcceptBytes, gist = () => false): Compressor {
+  const gate = primeFirst();
   return async (input, signal) => {
-    // Nothing waits on a merge, so before the first turn it waits for one; a message's line goes to `fallback`, since the turn waits on it.
     const merge = input.part.l > 0, turn = merge ? await turns.finished(signal) : await turns.latest(signal);
-    if (!turn) return fallback(input, signal);
-    const base = merge ? turn.first : turn.payload;
-    if (!Array.isArray(base.messages)) return fallback(input, signal);
-    const task = `${input.historical ? IMPORT_GUIDANCE + '\n\n' : ''}${compaction(input)}`;
-    // The first request ends on the turn's opening message, and a merge's task follows it as the next user message.
-    const reply = merge ? [] : [text('assistant', turn.answer || '(the turn ended without a reply)')];
-    const messages: unknown[] = [...base.messages, ...reply, text(merge ? 'assistant' : 'user', merge ? '(this turn is set aside for a compaction)' : task),
-      ...(merge ? [text('user', task)] : []), { role: 'system', content: [], output_config: { effort: effortOf(effort()) } }];
+    if (!turn || !Array.isArray(turn.payload.messages)) return fallback(input, signal);
+    const guidance = input.historical ? IMPORT_GUIDANCE + '\n\n' : '';
+    const settings = { effort: effortOf(effort()) };
+    let base: Record<string, unknown>, messages: unknown[], prefix: string | undefined;
+    if (merge) {
+      base = turn.first;
+      messages = [{ role: 'user', content: [{ type: 'text', text: input.context }, { type: 'text', text: `\n\n${guidance}${compaction({ ...input, gist: gist() })}` }] }];
+      const view = splitView(input.context);
+      prefix = view.length > 1 ? `${turn.model.id}\n${view.slice(0, -1).join('')}` : undefined;
+    } else {
+      base = turn.payload;
+      const answer = text('assistant', turn.answer || '(the turn ended without a reply)');
+      const held = holds([...turn.payload.messages, answer], input.source);
+      messages = [...turn.payload.messages, answer, text('user', `${guidance}${held ? pointedCompaction(input) : compaction(input)}`)];
+    }
+    messages.push({ role: 'system', content: [], output_config: settings });
     const tries: string[] = [];
     for (let attempt = 0; attempt < 5; attempt++) {
-      const payload = { ...base, messages: [...messages] };
-      const reply: AssistantMessage = await registry.streamSimple(turn.model, { messages: [] }, { signal, onPayload: () => payload }).result();
+      // cachePayload splits the view into marked blocks in place, so each attempt marks a copy.
+      const payload = merge ? cachePayload(structuredClone({ ...base, messages })) : { ...base, messages: [...messages] };
+      const warmed = prefix ? await gate(prefix, signal) : () => {};
+      let reply: AssistantMessage;
+      try { reply = await registry.streamSimple(turn.model, { messages: [] }, { signal, onPayload: () => payload }).result(); }
+      catch (error) { warmed(false); throw error; }
+      warmed(reply.stopReason !== 'error' && reply.stopReason !== 'aborted');
       onUsage(reply);
       if (reply.stopReason === 'error' || reply.stopReason === 'aborted') throw new Error(reply.errorMessage ?? `Fork ${reply.stopReason}`);
       // A reply cut off at the token limit, or one that calls a tool, is no summary: ask again.
@@ -88,12 +108,18 @@ export function createForkCompressor(registry: ModelRegistry, turns: Turns, effo
       if (!line) throw new Error('Fork returned no text.');
       tries.push(line);
       if (bytes(line) <= accepted() && bytes(line) < bytes(input.source)) break;
-      const cut = Buffer.from(line).subarray(0, NODE).toString('utf8').replace(/�$/, '');
+      const cut = Buffer.from(line).subarray(0, NODE).toString('utf8').replace(/\uFFFD$/, '');
       messages.push(text('assistant', line), text('user', tooLong(bytes(line), cut)));
     }
     if (!tries.length) throw new Error('Fork returned no whole line in 5 tries.');
     return tries.reduce((a, b) => bytes(a) <= bytes(b) ? a : b);
   };
+}
+
+/** Whether `messages` hold the message `source` (its `kind: ` and a tool's `name: ` prefix aside), found by its last characters. */
+function holds(messages: unknown[], source: string) {
+  const tail = JSON.stringify(source.slice(-120)).slice(1, -1);
+  return tail.length > 20 && JSON.stringify(messages).includes(tail);
 }
 
 /** The request as a fork resends it, copied when the turn sends it: Pi may change the object after. */

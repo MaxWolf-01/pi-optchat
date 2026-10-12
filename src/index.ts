@@ -205,7 +205,7 @@ export default function optchat(pi: ExtensionAPI) {
       const summarized = (message: AssistantMessage) => { usage.compression(message, 'compactor', sessionId); status(ctx); };
       const compactor = createCompressor(ctx.modelRegistry, () => config.compactor, summarized, () => config.summaryAcceptBytes);
       const memory = await Memory.open(memoryDirectory(dir), config.forkSummaries
-        ? createForkCompressor(ctx.modelRegistry, turns, () => config.compactor.thinking, compactor, summarized, () => config.summaryAcceptBytes) : compactor,
+        ? createForkCompressor(ctx.modelRegistry, turns, () => config.compactor.thinking, compactor, summarized, () => config.summaryAcceptBytes, () => config.mergeGist) : compactor,
       warning => ctx.ui.notify(warning, 'error'), undefined, undefined, config.lazyMerges);
       openingMemory = memory;
       const inbox = new Inbox(dir);

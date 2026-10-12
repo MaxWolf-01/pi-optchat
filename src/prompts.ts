@@ -174,7 +174,7 @@ export const cutOffChildren = (text: string, ids: string[]) => ids.length ? `${t
 // ruler; a real sample line once got its content copied, so it is dashes.
 const RULER = '-'.repeat(NODE);
 const label = (part: Part) => `${start(part)}+${2 ** part.l}`;
-export function compaction({ source, part }: { source: string; part: Part }) {
+export function compaction({ source, part, gist = false }: { source: string; part: Part; gist?: boolean }) {
   if (!part.l) return `Compaction: compress message ${part.i} into one line of at most 512 bytes
 (about 70 words), the length of this ruler:
 ${RULER}
@@ -186,9 +186,24 @@ ${source}
 512 bytes (about 70 words), the length of this ruler:
 ${RULER}
 <chat> may hold their messages, ${start(part)} to ${start(part) + 2 ** part.l - 1}, in more detail: take details
-of them from there too.
+of them from there too.${gist && part.l >= 3 ? `
+These lines stand for ${2 ** part.l} messages. Open with their gist in one or two sentences:
+what the work was, and what it found or decided. Then name the items that matter most.` : ''}
 <input>
 ${source}
+</input>`;
+}
+const KIND_NAMES: Record<string, string> = { user: 'user message', talk: 'reply', tool: 'tool call', echo: 'tool result', work: 'subagent report', note: 'note' };
+/** A message's task in a fork of the turn that holds it: the message is named by its start and end instead of repeated. */
+export function pointedCompaction({ source, part }: { source: string; part: Part }) {
+  const kind = source.slice(0, source.indexOf(':'));
+  return `Compaction: compress message ${part.i} into one line of at most 512 bytes
+(about 70 words), the length of this ruler:
+${RULER}
+<input> is the ${KIND_NAMES[kind] ?? 'message'} above in this conversation that starts and ends as shown below. Read it
+whole where it stands; the start and end here only tell you which one it is.
+<input>
+${source.slice(0, 160)} … ${source.slice(-120)}
 </input>`;
 }
 /** Sent back when a compaction's line is over the limit; `cut` is the line truncated at the limit. */

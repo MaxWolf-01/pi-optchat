@@ -16,7 +16,7 @@ const WARM_MS = 4 * 60_000; // Anthropic's short cache lives 5 minutes from its 
 
 /** Parallel calls can't read a cache entry that isn't written yet, so one call primes a cold prefix and the rest wait until it answers.
  * Parallel compactions end their views at different messages, so a call also waits for a primer of a shorter prefix of its own view. */
-function primeFirst() {
+export function primeFirst() {
   const warm = new Map<string, number | Promise<void>>();
   return async (prefix: string, signal: AbortSignal) => {
     const priming = () => { for (const [k, state] of warm) if (typeof state !== 'number' && prefix.startsWith(k)) return state; };

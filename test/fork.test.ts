@@ -66,15 +66,45 @@ test('a fork waits while a turn runs and forks the turn that ended; before any t
   assert.equal((sent[0].messages as { content: { text?: string }[] }[])[2].content[0].text, 'the newer reply');
 });
 
-test('a merge forks the last finished turn\'s first request at once, even while a turn runs', async () => {
+test('a merge is sent the turns\' tools and system prompt, then the compactions\' view and the task, at once even while a turn runs', async () => {
   const { sent, registry: models } = registry(['merged line']);
   const turns = new Turns(); turns.finish(turn); turns.start();
-  const merge: Compression = { context: 'unused', source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } };
+  const view = `<chat>\n${Array.from({ length: 9 }, (_, i) => `${i}+1|line ${i}`).join('\n')}\n</chat>`;
+  const merge: Compression = { context: view, source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } };
   assert.equal(await createForkCompressor(models, turns, () => 'low', noFallback)(merge, AbortSignal.timeout(1000)), 'merged line');
-  const messages = sent[0].messages as { role: string; content: { text?: string }[]; output_config?: unknown }[];
-  assert.deepEqual(messages.slice(0, 2), first.messages, 'the first request is the prefix');
-  assert.deepEqual(messages.slice(2).map(m => m.role), ['assistant', 'user', 'system']);
-  assert.match(messages[3].content[0].text!, /^Compaction: merge lines 0\+1 and 1\+1/);
+  const [payload] = sent, messages = payload.messages as { role: string; content: { text?: string; cache_control?: unknown }[]; output_config?: unknown }[];
+  for (const key of ['model', 'system']) assert.deepEqual(payload[key], first[key as keyof typeof first], key);
+  assert.deepEqual(messages.map(m => m.role), ['user', 'system']);
+  assert.equal(messages[0].content.slice(0, -1).map(b => b.text).join(''), view, 'the compactions\' view, whole, in marked blocks');
+  assert.ok(messages[0].content.some(b => b.cache_control), 'the view carries cache marks');
+  assert.match(messages[0].content.at(-1)!.text!, /Compaction: merge lines 0\+1 and 1\+1/);
+  assert.deepEqual(messages[1].output_config, { effort: 'low' });
+});
+
+test('a message the forked turn holds is named by its start and end; one it does not hold is quoted whole', async () => {
+  const { sent, registry: models } = registry(['line', 'line']);
+  const held = `read: ${'the file says this and that. '.repeat(40)}the end of the file`;
+  const turns = new Turns();
+  turns.finish({ ...turn, payload: { ...turn.payload, messages: [...turn.payload.messages, { role: 'user', content: [{ type: 'tool_result', content: [{ type: 'text', text: held.slice(6) }] }] }] } });
+  const compress = createForkCompressor(models, turns, () => 'low', noFallback);
+  await compress({ context: 'unused', source: `echo: ${held}`, part: { l: 0, i: 7 } }, AbortSignal.timeout(1000));
+  await compress(input, AbortSignal.timeout(1000));
+  const task = (n: number) => (sent[n].messages as { content: { text?: string }[] }[]).at(-2)!.content[0].text!;
+  assert.match(task(0), /the tool result above in this conversation/);
+  assert.ok(task(0).length < held.length, 'the held message is not repeated');
+  assert.ok(task(1).includes(input.source), 'a message the turn does not hold is quoted whole');
+});
+
+test('with gist on, a merge of 8 messages or more is asked to open with their gist', async () => {
+  const { sent, registry: models } = registry(['l', 'l']);
+  const turns = new Turns(); turns.finish(turn);
+  const compress = createForkCompressor(models, turns, () => 'low', noFallback, undefined, undefined, () => true);
+  const view = '<chat>\n0+1|a\n</chat>', source = `${'a'.repeat(300)}\n${'b'.repeat(300)}`;
+  await compress({ context: view, source, part: { l: 3, i: 0 } }, AbortSignal.timeout(1000));
+  await compress({ context: view, source, part: { l: 2, i: 0 } }, AbortSignal.timeout(1000));
+  const task = (n: number) => (sent[n].messages as { content: { text?: string }[] }[])[0].content.at(-1)!.text!;
+  assert.match(task(0), /These lines stand for 8 messages\. Open with their gist/);
+  assert.doesNotMatch(task(1), /gist/);
 });
 
 test('a merge before any turn waits for the first one instead of going to the fallback', async () => {

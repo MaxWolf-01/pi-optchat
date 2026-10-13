@@ -11,7 +11,7 @@ import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor } from './compactor.ts';
 import { createForkCompressor, snapshot, Turns } from './fork.ts';
 import { createProfile, holdProfile, instructions, isWindows, lastProfile, listProfiles, loadConfig, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
-import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, VIEW_DOC } from './prompts.ts';
+import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, STATUS, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
@@ -124,11 +124,12 @@ export default function optchat(pi: ExtensionAPI) {
     catch { note = ' · import journal invalid'; }
     ctx.ui.setStatus('optchat', `OptChat: ${a.name} · ${a.memory.root.length} messages · ${a.memory.pending} pending · ${a.children.ids.length} agents${note}`);
   };
-  /** The request's status line: the agents at work, then each line another extension adds on STATUS_CHANNEL. */
+  /** The request's status message: the agents at work, then each line another extension adds on STATUS_CHANNEL, under OptChat's label. */
   const statusLine = (a: Active) => {
     const added: { lines: unknown[] } = { lines: [] };
     pi.events.emit(STATUS_CHANNEL, added);
-    const lines = [atWork(a.children.working), ...added.lines].filter((line): line is string => typeof line === 'string' && line.trim() !== '');
+    const extensions = added.lines.filter((line): line is string => typeof line === 'string' && line.trim() !== '').map(line => STATUS + line);
+    const lines = [atWork(a.children.working) ?? [], extensions].flat();
     return lines.length ? lines.join('\n') : undefined;
   };
   // `steered` describes this process's Pi queue, so it is not journaled.

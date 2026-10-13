@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
 import { atWork, buildContext } from '../src/transcript.ts';
 import { cachePayload } from '../src/cache.ts';
-import { MASTER } from '../src/prompts.ts';
+import { MASTER, STATUS } from '../src/prompts.ts';
 
 const user: AgentMessage = { role: 'user', content: 'question', timestamp: 0 };
 const view = '<chat>\n' + '0+1|line\n'.repeat(400) + '</chat>';
@@ -45,4 +45,14 @@ test('the status line goes last, and the turn\'s cache mark sits on the block be
   assert.deepEqual(output.messages[2].content[0], { type: 'tool_result', tool_use_id: 't', content: 'ok', cache_control: { type: 'ephemeral' } });
   assert.ok(!('cache_control' in output.messages[3].content[0]));
   assert.equal((JSON.stringify(output).match(/cache_control/g) ?? []).length, 4, 'three view marks and the turn: Anthropic\'s limit');
+});
+
+test('a status message of another extension\'s lines alone still takes the turn\'s cache mark on the block before it', () => {
+  const payload = { messages: [
+    { role: 'user', content: [{ type: 'text', text: view }, { type: 'text', text: 'question' }] },
+    { role: 'user', content: [{ type: 'text', text: `${STATUS}Unread in the hypervisor's inbox: agents:board 1 message, 29 B, 3m old.` }] },
+  ] };
+  const output = cachePayload(payload) as typeof payload & { cache_control?: unknown };
+  assert.equal(output.cache_control, undefined, 'no mark at the end of the request, on the line that changes');
+  assert.deepEqual(output.messages[0].content.at(-1), { type: 'text', text: 'question', cache_control: { type: 'ephemeral' } });
 });

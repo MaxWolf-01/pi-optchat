@@ -1,5 +1,5 @@
 import { isView } from './memory.ts';
-import { AT_WORK } from './prompts.ts';
+import { STATUS } from './prompts.ts';
 
 export function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -21,9 +21,9 @@ export function splitView(text: string) {
  * 60 blocks (240 lines). With the end of the request, that is Anthropic's limit of 4 marks. */
 const MARKS = [0, 20, 40];
 
-/** The status line's own message, in Pi's context and in Anthropic's payload alike. */
-export const isAtWork = (message: unknown) => record(message) && message.role === 'user' && Array.isArray(message.content) && message.content.length === 1
-  && record(message.content[0]) && typeof message.content[0].text === 'string' && message.content[0].text.startsWith(AT_WORK);
+/** The status message, in Pi's context and in Anthropic's payload alike. */
+export const isStatus = (message: unknown) => record(message) && message.role === 'user' && Array.isArray(message.content) && message.content.length === 1
+  && record(message.content[0]) && typeof message.content[0].text === 'string' && message.content[0].text.startsWith(STATUS);
 function lastBlock(message: Record<string, unknown>) {
   if (typeof message.content === 'string') message.content = [{ type: 'text', text: message.content }];
   const block: unknown = Array.isArray(message.content) ? message.content.at(-1) : undefined;
@@ -69,7 +69,7 @@ export function cachePayload(payload: unknown, mark?: Record<string, unknown>): 
   // The status line changes between calls, so the turn's mark goes on the block before it rather than at the end of the request.
   // Pi may end the request with an empty system message carrying settings (effort); it holds nothing to cache.
   const [before, last] = messages.filter(message => !record(message) || message.role !== 'system').slice(-2);
-  const turn = isAtWork(last) && record(before) && before.role === 'user' ? lastBlock(before) : undefined;
+  const turn = isStatus(last) && record(before) && before.role === 'user' ? lastBlock(before) : undefined;
   if (turn) turn.cache_control = { ...cache };
   else payload.cache_control = { ...cache };
   return payload;

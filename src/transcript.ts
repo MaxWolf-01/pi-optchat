@@ -47,7 +47,8 @@ export function asUser(message: AgentMessage): AgentMessage {
   return { role: 'user', content: [{ type: 'text', text: tag.trimEnd() }, ...content], timestamp };
 }
 /** The details another extension's tool returns for memory to log its result as `work`, where any other result is an
- * `echo`: how a tool hands memory what it read on the agent's behalf, such as a message that waited for it. */
+ * `echo`: how a tool hands memory what it read on the agent's behalf, such as a message that waited for it. Its text starts
+ * "[sender] ", as a report's starts with its id, since that is how the view tells work from the user's words. */
 export const WORK_RESULT = { optchat: 'work' } as const;
 const isWork = (details: unknown) => record(details) && details.optchat === WORK_RESULT.optchat;
 export function logMessage(memory: Memory, message: AgentMessage, receipt?: string) {

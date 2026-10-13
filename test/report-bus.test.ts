@@ -109,7 +109,7 @@ test('another extension adds its line to the status line that ends a turn\'s req
   let unread = 1;
   const read = `[agents:fix-login] 2026-10-13T14:07 the PR is up, and the migration needs max.`;
   const inbox = (pi: ExtensionAPI) => {
-    pi.events.on(STATUS_CHANNEL, data => { if (unread) (data as { lines: string[] }).lines.push(`[inbox] ${unread} unread`); });
+    pi.events.on(STATUS_CHANNEL, data => { if (unread) (data as { lines: string[] }).lines.push(`Inbox: ${unread} unread`); });
     pi.registerTool({ name: 'inbox', label: 'Inbox', description: 'Read the inbox.', parameters: Type.Object({}),
       execute: async () => { unread = 0; return { content: [{ type: 'text', text: read }], details: WORK_RESULT }; } });
   };
@@ -118,11 +118,11 @@ test('another extension adds its line to the status line that ends a turn\'s req
     await session.prompt('What came in?');
     await settled(1);
     const [first, second] = requests;
-    assert.deepEqual(first.at(-1), { role: 'user', content: [{ type: 'text', text: '[inbox] 1 unread' }], timestamp: 0 }, 'the line ends the turn\'s first request');
+    assert.deepEqual(first.at(-1), { role: 'user', content: [{ type: 'text', text: '[OptChat status] Inbox: 1 unread' }], timestamp: 0 }, 'the line ends the turn\'s first request');
     assert.equal(second.at(-1)?.role, 'toolResult', 'the turn already had it: the call after a tool result goes without');
     const entries = log();
     assert.deepEqual(entries.filter(e => e.kind === 'work').map(e => e.text), [read]);
-    assert.ok(!entries.some(e => e.text.includes('[inbox]')), 'the status line is never stored');
+    assert.ok(!entries.some(e => e.text.includes('Inbox:')), 'the status line is never stored');
     const turn = requests.length;
     await session.prompt('Anything else?');
     await settled(2);

@@ -46,6 +46,10 @@ export function asUser(message: AgentMessage): AgentMessage {
   if (first?.type === 'text') return { role: 'user', content: [{ ...first, text: tag + first.text }, ...rest], timestamp };
   return { role: 'user', content: [{ type: 'text', text: tag.trimEnd() }, ...content], timestamp };
 }
+/** The details another extension's tool returns for memory to log its result as `work`, where any other result is an
+ * `echo`: how a tool hands memory what it read on the agent's behalf, such as a message that waited for it. */
+export const WORK_RESULT = { optchat: 'work' } as const;
+const isWork = (details: unknown) => record(details) && details.optchat === WORK_RESULT.optchat;
 export function logMessage(memory: Memory, message: AgentMessage, receipt?: string) {
   const date = new Date(message.timestamp).toISOString();
   if (message.role === 'user') memory.append(receipt?.startsWith(REPORT_RECEIPT) ? 'work' : 'user', textContent(message.content), date, receipt);
@@ -56,7 +60,8 @@ export function logMessage(memory: Memory, message: AgentMessage, receipt?: stri
     }
     if (message.stopReason === 'error' || message.stopReason === 'aborted')
       memory.append('echo', `Agent ${message.stopReason}: ${message.errorMessage ?? 'No further details'}`, date);
-  } else if (message.role === 'toolResult')
+  } else if (message.role === 'toolResult' && isWork(message.details)) memory.append('work', textContent(message.content), date);
+  else if (message.role === 'toolResult')
     // A zoom's page already names the images it returns.
     memory.append('echo', cap(`${message.toolName}: ${textContent(message.content, message.toolName !== 'zoom')}`), date);
 }

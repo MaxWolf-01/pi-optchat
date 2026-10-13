@@ -30,18 +30,28 @@ function lastBlock(message: Record<string, unknown>) {
   return record(block) ? block : undefined;
 }
 
+/** The cache mark Pi put on a request, which carries Pi's cache retention (`PI_CACHE_RETENTION=long` gives it a 1-hour ttl),
+ * or a 5-minute mark when it holds none. */
+export function markOf(payload: Record<string, unknown>): Record<string, unknown> {
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  const blocks = [payload.system, payload.tools, ...messages.map(m => record(m) ? m.content : undefined)].flatMap(b => Array.isArray(b) ? b : []);
+  const found = blocks.find(b => record(b) && record(b.cache_control));
+  const mark = record(found) ? found.cache_control : payload.cache_control;
+  return record(mark) ? { ...mark } : { type: 'ephemeral' };
+}
+
 /** Anthropic: marks on the view (see MARKS) plus automatic end-of-request caching, so the next call finds the last one's entry
- * and pays only for the lines after it. */
-export function cachePayload(payload: unknown): unknown {
+ * and pays only for the lines after it. Every mark is `mark`, by default the one Pi put on the request, so its retention holds. */
+export function cachePayload(payload: unknown, mark?: Record<string, unknown>): unknown {
   if (!record(payload) || !Array.isArray(payload.messages)) return payload;
-  const messages = payload.messages;
+  const messages = payload.messages, cache = mark ?? markOf(payload);
   const view = new Set<unknown>();
   for (const message of messages) {
     if (!record(message) || message.role !== 'user' || !Array.isArray(message.content)) continue;
     const at = message.content.findIndex((block: unknown) => record(block) && block.type === 'text' && typeof block.text === 'string' && isView(block.text));
     if (at < 0) continue;
     const pieces = splitView(message.content[at].text), marked = new Set(MARKS.map(back => pieces.length - 2 - back));
-    const blocks = pieces.map((text, j) => ({ type: 'text', text, ...(marked.has(j) ? { cache_control: { type: 'ephemeral' } } : {}) }));
+    const blocks = pieces.map((text, j) => ({ type: 'text', text, ...(marked.has(j) ? { cache_control: { ...cache } } : {}) }));
     message.content.splice(at, 1, ...blocks);
     for (const block of blocks) view.add(block);
     break;
@@ -60,7 +70,7 @@ export function cachePayload(payload: unknown): unknown {
   // Pi may end the request with an empty system message carrying settings (effort); it holds nothing to cache.
   const [before, last] = messages.filter(message => !record(message) || message.role !== 'system').slice(-2);
   const turn = isAtWork(last) && record(before) && before.role === 'user' ? lastBlock(before) : undefined;
-  if (turn) turn.cache_control = { type: 'ephemeral' };
-  else payload.cache_control = { type: 'ephemeral' };
+  if (turn) turn.cache_control = { ...cache };
+  else payload.cache_control = { ...cache };
   return payload;
 }

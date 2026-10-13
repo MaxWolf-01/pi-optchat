@@ -15,7 +15,7 @@ import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC,
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
 import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
-import { registerReportRenderer, type ReportDetails } from './report-message.ts';
+import { registerReportRenderer, REPORT_CHANNEL, type ReportDetails } from './report-message.ts';
 import { memoryTools, result, searchTool } from './tools.ts';
 import { Children, CWD_DOC, loadedBuiltins } from './agents.ts';
 import { exportBrowser } from './browser.ts';
@@ -445,6 +445,17 @@ export default function optchat(pi: ExtensionAPI) {
   });
   registerConnectedRenderer(pi);
   registerReportRenderer(pi);
+  // A report from another extension goes the way a subagent's does: journaled, then a turn of its own or steered into the running one.
+  pi.events.on(REPORT_CHANNEL, data => {
+    if (!record(data) || typeof data.text !== 'string' || !data.text.trim() || !active || stopping || importing) return;
+    let report: Report | undefined;
+    try {
+      if (pendingImport(active.dir)) return;
+      report = { text: data.text }; reports.push(report); saveReports();
+    } catch { reports = reports.filter(r => r !== report); return; }
+    data.taken = true;
+    sendReport(report);
+  });
   const [zoom, date] = memoryTools(() => required().memory, id => required().children.transcript(id));
   pi.registerTool(zoom); pi.registerTool(date);
   pi.registerTool({ ...searchTool(() => required().memory), defaultActive: false });

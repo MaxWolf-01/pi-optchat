@@ -4,6 +4,10 @@ import { REPORT_TYPE, textContent, withoutFullChat } from './transcript.ts';
 
 const HEAD = /^\[([0-9a-f]{8})\] (?:(Message from subagent \(still running\)|Connected agent message): )?/;
 
+/** The event bus channel another extension reports on: it emits `{ text }`, the report as `[id] body`, and OptChat sets
+ * `taken: true` on it once the report is journaled for this profile's memory. A report no profile took stays with its sender. */
+export const REPORT_CHANNEL = 'optchat:report';
+
 /** Sent with a report: `count` subagent reports joined in one message, when one spawn's reports arrive together. */
 export interface ReportDetails { count?: number }
 

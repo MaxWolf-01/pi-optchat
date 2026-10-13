@@ -782,3 +782,16 @@ test('view size counts the flattened text that render emits, for new and reloade
     assert.equal(memory.size, measured(memory), 'loaded from the tree');
   } finally { await memory.close(); rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('every mark keeps the cache lifetime Pi put on the request, and is 5 minutes when Pi put none', () => {
+  const view = '<chat>\n' + '0+1|summary of a decision\n'.repeat(400) + '</chat>';
+  const marks = (system: Record<string, unknown>[]) => {
+    const payload = { system, messages: [{ role: 'user', content: [{ type: 'text', text: view }, { type: 'text', text: 'new question' }] }] };
+    const output = JSON.stringify(cachePayload(payload));
+    return [...output.matchAll(/"cache_control":(\{[^}]*\})/g)].map(m => JSON.parse(m[1]));
+  };
+  const long = marks([{ type: 'text', text: 'system', cache_control: { type: 'ephemeral', ttl: '1h' } }]);
+  assert.equal(long.length, 4);
+  assert.ok(long.every(m => m.ttl === '1h'), 'PI_CACHE_RETENTION=long: an hour');
+  assert.ok(marks([{ type: 'text', text: 'system' }]).every(m => m.type === 'ephemeral' && !('ttl' in m)), 'no mark from Pi: 5 minutes');
+});

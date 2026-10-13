@@ -133,3 +133,16 @@ test('a fork writes nothing new to the cache: its marks sit where the turn or th
   const merge = sent[1].messages as { content: { text?: string; cache_control?: unknown }[] }[];
   assert.ok(!merge[0].content.at(-1)!.cache_control, 'the task is not marked');
 });
+
+test('a message\'s line reads the turn\'s cache with the turn\'s own lifetime; a merge writes its view for 5 minutes', async () => {
+  const { sent, registry: models } = registry(['line', 'line']);
+  const hour = { type: 'ephemeral', ttl: '1h' };
+  const marked = { ...turn.payload, messages: [{ role: 'user', content: [{ type: 'text', text: '<chat>\n0+1|user: hi\n</chat>', cache_control: hour }] }, turn.payload.messages[1]] };
+  const turns = new Turns(); turns.finish({ ...turn, payload: marked });
+  const compress = createForkCompressor(models, turns, () => 'low', noFallback);
+  await compress(input, AbortSignal.timeout(1000));
+  await compress({ context: `<chat>\n${Array.from({ length: 9 }, (_, i) => `${i}+1|line ${i}`).join('\n')}\n</chat>`, source: `${'a'.repeat(300)}\n${'b'.repeat(300)}`, part: { l: 1, i: 0 } }, AbortSignal.timeout(1000));
+  const marks = (payload: unknown) => [...JSON.stringify(payload).matchAll(/"cache_control":(\{[^}]*\})/g)].map(m => JSON.parse(m[1]));
+  assert.deepEqual(marks(sent[0]), [hour]);
+  assert.ok(marks(sent[1]).length > 0 && marks(sent[1]).every(m => !('ttl' in m)));
+});

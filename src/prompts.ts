@@ -98,7 +98,8 @@ export const VIEW_DOC = `The view: the whole chat between OptChat and the user, 
 A summary tags each item with its kind: user (the user's words), talk
 (OptChat's replies), tool (OptChat's tool calls), echo (their results), note
 (memories from before this chat), or work (the report of a subagent or
-a computer task, or a message a tool read for OptChat, starting "[id] "). A short message is its own line, word for word. Recent lines
+a computer task, or a message a tool read for OptChat, starting with its
+source in brackets: "[id] " for a subagent, "[sender] " for another). A short message is its own line, word for word. Recent lines
 cover one message each; the older the messages, the more a line covers.
 A message not summarized yet shows as "(not summarized yet: zoom it)".
 

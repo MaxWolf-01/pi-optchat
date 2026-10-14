@@ -14,7 +14,7 @@ import { createProfile, holdProfile, instructions, isWindows, lastProfile, listP
 import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, STATUS, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
-import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
+import { asUser, boundedMessage, atWork, buildContext, takesNewInput, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
 import { registerReportRenderer, REPORT_CHANNEL, STATUS_CHANNEL, type ReportDetails } from './report-message.ts';
 import { memoryTools, result, searchTool } from './tools.ts';
 import { Children, CWD_DOC, loadedBuiltins } from './agents.ts';
@@ -405,8 +405,8 @@ export default function optchat(pi: ExtensionAPI) {
         turns.start(); // Summaries of this turn's messages fork it once it ends.
         flush();
       }
-      // Built on every call, unlike the view, so it is never out of date; it goes last, after everything cached.
-      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, statusLine(a)) };
+      // Built on every call that carries it, unlike the view, so it is never out of date; it goes last, after everything cached.
+      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, takesNewInput(run) ? statusLine(a) : undefined) };
     } catch (error) {
       // Pi catches extension errors. Explicitly abort so it cannot fall back to old context.
       ctx.abort();

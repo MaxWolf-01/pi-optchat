@@ -165,9 +165,13 @@ export function atWork(runs: readonly { id: string; task: string }[]) {
   }).join(', ') + '.';
 }
 
+/** Whether a call of the run `run` takes new input (the user, a report, a restart note) and so carries the status line: a
+ * call that follows a tool result is the same turn, which already had it. */
+export const takesNewInput = (run: AgentMessage[]) => run.filter(m => m.role !== 'system').at(-1)?.role !== 'toolResult';
+
 /** Keep one completed exchange plus the current run; all other history comes from the view.
- * `status` goes last, after everything cached, so it never moves the cached prefix (see cachePayload). It comes with new input only
- * (the user, a report, a restart note): a call that follows a tool result is the same turn, which already had it. */
+ * `status` goes last, after everything cached, so it never moves the cached prefix (see cachePayload); only a call that
+ * takes new input carries it. */
 export function buildContext(canonical: AgentMessage[], run: AgentMessage[], view: string, prompt: string,
   previous: readonly AgentMessage[] = [], status?: string): AgentMessage[] {
   const system = getCurrentSystemMessage(canonical);
@@ -181,5 +185,5 @@ export function buildContext(canonical: AgentMessage[], run: AgentMessage[], vie
     const [first, ...rest] = typeof message.content === 'string' ? [{ type: 'text' as const, text: message.content }] : message.content;
     return { ...message, content: [{ type: 'text' as const, text: view }, ...first?.type === 'text' ? [{ ...first, text: `\n\n${first.text}` }] : first ? [first] : [], ...rest] };
   });
-  return [head, ...messages, ...status && messages.at(-1)?.role !== 'toolResult' ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: status }], timestamp: 0 }] : []];
+  return [head, ...messages, ...status && takesNewInput(run) ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: status }], timestamp: 0 }] : []];
 }

@@ -11,11 +11,11 @@ import { atomicWrite, storeFor } from './store.ts';
 import { createCompressor } from './compactor.ts';
 import { createForkCompressor, snapshot, Turns } from './fork.ts';
 import { createProfile, holdProfile, instructions, isWindows, lastProfile, listProfiles, loadConfig, profilePath, rememberProfile, saveConfig, ProfileBusyError, type ProfileConfig } from './profiles.ts';
-import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, VIEW_DOC } from './prompts.ts';
+import { allowSearch, CONTINUITY, FORK_DOC, IMPORT_GUIDANCE, MASTER, SEARCH_DOC, STATUS, VIEW_DOC } from './prompts.ts';
 import { cachePayload, record } from './cache.ts';
 import { saveImages } from './images.ts';
-import { asUser, boundedMessage, atWork, buildContext, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
-import { registerReportRenderer, REPORT_CHANNEL, type ReportDetails } from './report-message.ts';
+import { asUser, boundedMessage, atWork, buildContext, takesNewInput, logMessage, previousExchange, reportReceipt, REPORT_RECEIPT, REPORT_TYPE, RUN_BOUNDARY, textContent, typedText } from './transcript.ts';
+import { registerReportRenderer, REPORT_CHANNEL, STATUS_CHANNEL, type ReportDetails } from './report-message.ts';
 import { memoryTools, result, searchTool } from './tools.ts';
 import { Children, CWD_DOC, loadedBuiltins } from './agents.ts';
 import { exportBrowser } from './browser.ts';
@@ -123,6 +123,14 @@ export default function optchat(pi: ExtensionAPI) {
     try { note = importing ? ' · importing' : pendingImport(a.dir) ? ' · import paused: /optchat import' : ''; }
     catch { note = ' · import journal invalid'; }
     ctx.ui.setStatus('optchat', `OptChat: ${a.name} · ${a.memory.root.length} messages · ${a.memory.pending} pending · ${a.children.ids.length} agents${note}`);
+  };
+  /** The request's status message: the agents at work, then each line another extension adds on STATUS_CHANNEL, under OptChat's label. */
+  const statusLine = (a: Active) => {
+    const added: { lines: unknown[] } = { lines: [] };
+    pi.events.emit(STATUS_CHANNEL, added);
+    const extensions = added.lines.filter((line): line is string => typeof line === 'string' && line.trim() !== '').map(line => STATUS + line);
+    const lines = [atWork(a.children.working) ?? [], extensions].flat();
+    return lines.length ? lines.join('\n') : undefined;
   };
   // `steered` describes this process's Pi queue, so it is not journaled.
   const saveReports = () => { if (active) atomicWrite(join(active.dir, 'pending-reports.json'), JSON.stringify(reports, (key, value: unknown) => key === 'steered' ? undefined : value)); };
@@ -397,8 +405,8 @@ export default function optchat(pi: ExtensionAPI) {
         turns.start(); // Summaries of this turn's messages fork it once it ends.
         flush();
       }
-      // Built on every call, unlike the view, so it is never out of date; it goes last, after everything cached.
-      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, atWork(a.children.working)) };
+      // Built on every call that carries it, unlike the view, so it is never out of date; it goes last, after everything cached.
+      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, takesNewInput(run) ? statusLine(a) : undefined) };
     } catch (error) {
       // Pi catches extension errors. Explicitly abort so it cannot fall back to old context.
       ctx.abort();

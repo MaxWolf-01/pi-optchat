@@ -405,8 +405,10 @@ export default function optchat(pi: ExtensionAPI) {
         turns.start(); // Summaries of this turn's messages fork it once it ends.
         flush();
       }
-      // Built on every call, unlike the view, so it is never out of date; it goes last, after everything cached.
-      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, statusLine(a)) };
+      // Built on every call that carries it, unlike the view, so it is never out of date; it goes last, after everything
+      // cached. A call after a tool result goes without, so no extension is asked for a line nobody reads.
+      const status = run.at(-1)?.role === 'toolResult' ? undefined : statusLine(a);
+      return { messages: buildContext(event.messages, run, view, promptFor(prompt, a.config), previous, status) };
     } catch (error) {
       // Pi catches extension errors. Explicitly abort so it cannot fall back to old context.
       ctx.abort();

@@ -7,8 +7,8 @@ const HEAD = /^\[([0-9a-f]{8})\] (?:(Message from subagent \(still running\)|Con
 /** The event bus channel another extension reports on: it emits `{ text }`, the report as `[id] body`, and OptChat sets
  * `taken: true` on it once the report is journaled for this profile's memory. A report no profile took stays with its sender. */
 export const REPORT_CHANNEL = 'optchat:report';
-/** The event bus channel another extension adds to the status line on: OptChat emits `{ lines: [] }` as it builds each
- * request, and a listener pushes its own line before its first `await`. Each goes after OptChat's own, under its "[OptChat status]" label, and is never stored. */
+/** The event bus channel another extension adds to the status line on: OptChat emits `{ lines: [] }` as it builds a
+ * request that ends with the status line, and a listener pushes its own line before its first `await`. Each goes after OptChat's own, under its "[OptChat status]" label, and is never stored. */
 export const STATUS_CHANNEL = 'optchat:status';
 
 /** Sent with a report: `count` subagent reports joined in one message, when one spawn's reports arrive together. */

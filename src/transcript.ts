@@ -165,12 +165,15 @@ export function atWork(runs: readonly { id: string; task: string }[]) {
   }).join(', ') + '.';
 }
 
+/** Whether a call of the run `run` takes new input (the user, a report, a restart note) and so carries the status line: a
+ * call that follows a tool result is the same turn, which already had it. */
+export const takesNewInput = (run: AgentMessage[]) => run.filter(m => m.role !== 'system').at(-1)?.role !== 'toolResult';
+
 /** Keep one completed exchange plus the current run; all other history comes from the view.
- * The status line `status` builds goes last, after everything cached, so it never moves the cached prefix (see cachePayload). It
- * comes with new input only (the user, a report, a restart note): a call that follows a tool result is the same turn, which
- * already had it, so `status` is not called for one. */
+ * `status` goes last, after everything cached, so it never moves the cached prefix (see cachePayload); only a call that
+ * takes new input carries it. */
 export function buildContext(canonical: AgentMessage[], run: AgentMessage[], view: string, prompt: string,
-  previous: readonly AgentMessage[] = [], status?: () => string | undefined): AgentMessage[] {
+  previous: readonly AgentMessage[] = [], status?: string): AgentMessage[] {
   const system = getCurrentSystemMessage(canonical);
   const head: SystemMessage = { role: 'system', content: prompt, toolsAdded: system?.toolsAdded, timestamp: 0 };
   if (!run.some(m => m.role === 'user')) throw new Error('OptChat has no current user message; refusing to send historical context.');
@@ -182,6 +185,5 @@ export function buildContext(canonical: AgentMessage[], run: AgentMessage[], vie
     const [first, ...rest] = typeof message.content === 'string' ? [{ type: 'text' as const, text: message.content }] : message.content;
     return { ...message, content: [{ type: 'text' as const, text: view }, ...first?.type === 'text' ? [{ ...first, text: `\n\n${first.text}` }] : first ? [first] : [], ...rest] };
   });
-  const line = messages.at(-1)?.role === 'toolResult' ? undefined : status?.();
-  return [head, ...messages, ...line ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: line }], timestamp: 0 }] : []];
+  return [head, ...messages, ...status && takesNewInput(run) ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: status }], timestamp: 0 }] : []];
 }

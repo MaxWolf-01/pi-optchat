@@ -107,9 +107,10 @@ test('another extension reports on the event bus: taken while a profile is open,
 
 test('another extension adds its line to the status line that ends a turn\'s request, and its tool hands memory what it read as work', async () => {
   let unread = 1;
+  let asked = 0;
   const read = `[agents:fix-login] 2026-10-13T14:07 the PR is up, and the migration needs max.`;
   const inbox = (pi: ExtensionAPI) => {
-    pi.events.on(STATUS_CHANNEL, data => { if (unread) (data as { lines: string[] }).lines.push(`Inbox: ${unread} unread`); });
+    pi.events.on(STATUS_CHANNEL, data => { asked++; if (unread) (data as { lines: string[] }).lines.push(`Inbox: ${unread} unread`); });
     pi.registerTool({ name: 'inbox', label: 'Inbox', description: 'Read the inbox.', parameters: Type.Object({}),
       execute: async () => ({ content: [{ type: 'text', text: read }], details: WORK_RESULT }) });
   };
@@ -122,6 +123,7 @@ test('another extension adds its line to the status line that ends a turn\'s req
     const [first, second] = requests;
     assert.deepEqual(first.at(-1), { role: 'user', content: [{ type: 'text', text: '[OptChat status] Inbox: 1 unread' }], timestamp: 0 }, 'the line ends the turn\'s first request');
     assert.equal(second.at(-1)?.role, 'toolResult', 'the turn already had it: the call after a tool result goes without');
+    assert.equal(asked, 1, 'and the extension is not asked for it');
     const entries = log();
     assert.deepEqual(entries.filter(e => e.kind === 'work').map(e => e.text), [read]);
     assert.ok(!entries.some(e => e.text.includes('Inbox:')), 'the status line is never stored');

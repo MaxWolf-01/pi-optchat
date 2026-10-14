@@ -17,7 +17,7 @@ test('the status line names running agents by id and first task words, under a l
 
 test('with no agents running there is no status line at all', () => {
   assert.equal(atWork([]), undefined);
-  assert.deepEqual(buildContext([user], [user], view, 'prompt', [], atWork([])).map(m => m.role), ['system', 'user']);
+  assert.deepEqual(buildContext([user], [user], view, 'prompt', [], () => atWork([])).map(m => m.role), ['system', 'user']);
 });
 
 test('a call that follows a tool result carries no status line: the turn already has it', () => {
@@ -25,12 +25,12 @@ test('a call that follows a tool result carries no status line: the turn already
   const call: AgentMessage = { role: 'assistant', content: [{ type: 'toolCall', id: 't', name: 'date', arguments: { id: 0 } }], api: 'anthropic-messages', provider: 'p', model: 'm',
     stopReason: 'toolUse', usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, timestamp: 0 };
   const result: AgentMessage = { role: 'toolResult', toolCallId: 't', toolName: 'date', content: [{ type: 'text', text: 'Fri' }], isError: false, timestamp: 0 };
-  assert.deepEqual(buildContext([user, call, result], [user, call, result], view, 'prompt', [], line).map(m => m.role), ['system', 'user', 'assistant', 'toolResult']);
+  assert.deepEqual(buildContext([user, call, result], [user, call, result], view, 'prompt', [], () => line).map(m => m.role), ['system', 'user', 'assistant', 'toolResult']);
 });
 
 test('the status line goes last, and the turn\'s cache mark sits on the block before it', () => {
   const line = atWork([{ id: 'a1', task: 'Fix it' }])!;
-  assert.deepEqual(buildContext([user], [user], view, 'prompt', [], line).at(-1), { role: 'user', content: [{ type: 'text', text: line }], timestamp: 0 });
+  assert.deepEqual(buildContext([user], [user], view, 'prompt', [], () => line).at(-1), { role: 'user', content: [{ type: 'text', text: line }], timestamp: 0 });
   // As Anthropic receives it, right after a tool result: the line changes between calls, so a mark on it would be written and never read.
   const payload = { messages: [
     { role: 'user', content: [{ type: 'text', text: view }, { type: 'text', text: 'question' }] },

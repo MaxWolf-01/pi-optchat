@@ -166,10 +166,11 @@ export function atWork(runs: readonly { id: string; task: string }[]) {
 }
 
 /** Keep one completed exchange plus the current run; all other history comes from the view.
- * `status` goes last, after everything cached, so it never moves the cached prefix (see cachePayload). It comes with new input only
- * (the user, a report, a restart note): a call that follows a tool result is the same turn, which already had it. */
+ * The status line `status` builds goes last, after everything cached, so it never moves the cached prefix (see cachePayload). It
+ * comes with new input only (the user, a report, a restart note): a call that follows a tool result is the same turn, which
+ * already had it, so `status` is not called for one. */
 export function buildContext(canonical: AgentMessage[], run: AgentMessage[], view: string, prompt: string,
-  previous: readonly AgentMessage[] = [], status?: string): AgentMessage[] {
+  previous: readonly AgentMessage[] = [], status?: () => string | undefined): AgentMessage[] {
   const system = getCurrentSystemMessage(canonical);
   const head: SystemMessage = { role: 'system', content: prompt, toolsAdded: system?.toolsAdded, timestamp: 0 };
   if (!run.some(m => m.role === 'user')) throw new Error('OptChat has no current user message; refusing to send historical context.');
@@ -181,5 +182,6 @@ export function buildContext(canonical: AgentMessage[], run: AgentMessage[], vie
     const [first, ...rest] = typeof message.content === 'string' ? [{ type: 'text' as const, text: message.content }] : message.content;
     return { ...message, content: [{ type: 'text' as const, text: view }, ...first?.type === 'text' ? [{ ...first, text: `\n\n${first.text}` }] : first ? [first] : [], ...rest] };
   });
-  return [head, ...messages, ...status && messages.at(-1)?.role !== 'toolResult' ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: status }], timestamp: 0 }] : []];
+  const line = messages.at(-1)?.role === 'toolResult' ? undefined : status?.();
+  return [head, ...messages, ...line ? [{ role: 'user' as const, content: [{ type: 'text' as const, text: line }], timestamp: 0 }] : []];
 }

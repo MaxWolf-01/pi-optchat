@@ -118,15 +118,16 @@ export function createForkCompressor(registry: ModelRegistry, turns: Turns, effo
 /**
  * The request a fork sends, with its cache marks where they read what is cached and write nothing new: the task is asked
  * once, so caching it would only pay the write. A merge's marks sit on the compactions' view, with the 5-minute lifetime:
- * the merges of one batch read it within seconds. A message's line marks the last block of the turn's own request (its first
- * `held` messages), where the turn's request was cached, with the turn's own mark (`turn`), in place of the mark at the
- * request's end.
+ * the merges of one batch read it within seconds. A message's line keeps the turn's marks, which already sit where the turn
+ * was cached. Only a mark at the request's end moves: to the last block of the turn's own request (its first `held`
+ * messages), with the turn's own mark (`turn`). A turn whose request ended on a status line marked the block before it, so
+ * marking its last block as well would make 5 marks, one past Anthropic's limit.
  */
 function request(base: Record<string, unknown>, messages: unknown[], merge: boolean, held: number, turn: Record<string, unknown>) {
   // cachePayload splits the view into marked blocks in place, so each attempt marks a copy.
   const payload = structuredClone({ ...base, messages }) as Record<string, unknown> & { messages: unknown[] };
   if (merge) cachePayload(payload, { type: 'ephemeral' });
-  else {
+  else if (record(payload.cache_control)) {
     const last = payload.messages.slice(0, held).findLast(m => record(m) && m.role !== 'system' && Array.isArray(m.content) && m.content.length);
     const block = record(last) && Array.isArray(last.content) ? last.content.at(-1) : undefined;
     if (record(block)) block.cache_control = markOf(turn);

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
 import type { ModelRegistry } from '@earendil-works/pi-coding-agent';
 import { createForkCompressor, Turns } from '../src/fork.ts';
+import { cachePayload } from '../src/cache.ts';
+import { STATUS } from '../src/prompts.ts';
 import { emptyUsage } from '../src/usage.ts';
 import type { Compression } from '../src/memory.ts';
 
@@ -145,4 +147,20 @@ test('a message\'s line reads the turn\'s cache with the turn\'s own lifetime; a
   const marks = (payload: unknown) => [...JSON.stringify(payload).matchAll(/"cache_control":(\{[^}]*\})/g)].map(m => JSON.parse(m[1]));
   assert.deepEqual(marks(sent[0]), [hour]);
   assert.ok(marks(sent[1]).length > 0 && marks(sent[1]).every(m => !('ttl' in m)));
+});
+
+test('a turn whose request ended on a status line is forked within Anthropic\'s 4 marks, the status line unmarked', async () => {
+  const { sent, registry: models } = registry(['line']);
+  const view = `<chat>\n${Array.from({ length: 200 }, (_, i) => `${i}+1|line ${i}`).join('\n')}\n</chat>`;
+  const payload = cachePayload(structuredClone({ ...turn.payload, messages: [
+    { role: 'user', content: [{ type: 'text', text: view }] },
+    { role: 'user', content: [{ type: 'text', text: 'the new input' }] },
+    { role: 'user', content: [{ type: 'text', text: `${STATUS}at work` }] },
+  ] })) as Record<string, unknown>;
+  const turns = new Turns(); turns.finish({ ...turn, payload });
+  await createForkCompressor(models, turns, () => 'low', noFallback)(input, AbortSignal.timeout(1000));
+  const marks = [...JSON.stringify(sent[0]).matchAll(/"cache_control"/g)].length;
+  assert.equal(marks, 4, 'the view\'s 3 marks and the turn\'s');
+  const messages = sent[0].messages as { content: { text?: string; cache_control?: unknown }[] }[];
+  assert.ok(!messages.find(m => m.content[0]?.text?.startsWith(STATUS))!.content.at(-1)!.cache_control, 'the status line is not marked');
 });

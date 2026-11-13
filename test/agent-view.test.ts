@@ -19,7 +19,7 @@ initTheme('dark', false);
 class OffscreenTerminal implements Terminal {
   start() {} stop() {} async drainInput() {} write(_data: string) {}
   get columns() { return 100; } get rows() { return 30; } get kittyProtocolActive() { return false; }
-  moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgress() {}
+  moveBy() {} hideCursor() {} showCursor() {} clearLine() {} clearFromCursor() {} clearScreen() {} setTitle() {} setProgramStatus() {} setProgress() {}
 }
 const plain = (lines: string[]) => lines.join('\n').replace(/\x1b\[[0-9;:]*[A-Za-z]|\x1b[\]_][^\x07\x1b]*(\x07|\x1b\\)/g, '');
 
